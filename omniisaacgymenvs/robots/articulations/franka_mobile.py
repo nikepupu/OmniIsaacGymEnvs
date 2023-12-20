@@ -129,7 +129,7 @@ class FrankaMobile(Robot):
             )
             print('Done')
 
-    def set_kinova_properties(self, stage, prim):
+    def set_franka_properties(self, stage, prim):
         for link_prim in prim.GetChildren():
             if link_prim.HasAPI(PhysxSchema.PhysxRigidBodyAPI): 
                 rb = PhysxSchema.PhysxRigidBodyAPI.Get(stage, link_prim.GetPrimPath())

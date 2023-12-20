@@ -24,6 +24,7 @@ class Cabinet(Robot):
         usd_path: Optional[str] = None,
         translation: Optional[torch.tensor] = None,
         orientation: Optional[torch.tensor] = None,
+        scales: Optional[torch.tensor] = None,
     ) -> None:
         """[summary]"""
         self._usd_path = usd_path
@@ -40,10 +41,13 @@ class Cabinet(Robot):
         self._position = torch.tensor([0.0, 0.0, 0.4]) if translation is None else translation
         self._orientation = torch.tensor([0.1, 0.0, 0.0, 0.0]) if orientation is None else orientation
 
+        self._scales = torch.tensor([1.0,1.0,1.0]) if scales is None else scales
+
         super().__init__(
             prim_path=prim_path,
             name=name,
             translation=self._position,
             orientation=self._orientation,
             articulation_controller=None,
+            scale = self._scales,
         )

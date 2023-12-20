@@ -1,5 +1,5 @@
 # used to create the object
-name: FrankaMobileDrawer
+name: FrankaMobileDrawerTaskRecord
 
 physics_engine: ${..physics_engine}
 

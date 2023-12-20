@@ -22,9 +22,9 @@ from omni.isaac.core.utils.torch.rotations import *
 from omni.isaac.core.utils.torch.transformations import *
 from omni.isaac.core.prims import RigidPrimView, XFormPrim
 from omni.isaac.core.materials import PhysicsMaterial
-# from omni.isaac.core import World
+from omni.isaac.core import World
 # from omni.debugdraw import get_debug_draw_interface
-from omniisaacgymenvs.tasks.base.rl_task import RLTask
+from omniisaacgymenvs.tasks.base.rl_task_record import RLTaskRecord
 from omniisaacgymenvs.robots.articulations.cabinet import Cabinet
 # from omniisaacgymenvs.robots.articulations.franka import Franka
 # from omniisaacgymenvs.robots.articulations.franka_mobile import KinovaMobile
@@ -48,6 +48,7 @@ from omni.isaac.core.utils.torch.rotations import (
 )
 # from pytorch3d.transforms import quaternion_to_matrix
 from omni.physx.scripts import deformableUtils, physicsUtils
+from omni.isaac.core.utils.stage import add_reference_to_stage
 # def quat_axis(q, axis=0):
 #     '''
 #     :func apply rotation represented by quanternion `q`
@@ -125,7 +126,7 @@ def combine_frame_transforms(
 
     return t02, q02
 
-class FrankaMobileDrawerTask(RLTask):
+class FrankaMobileDrawerTaskRecord(RLTaskRecord):
     def __init__(self, name, sim_config, env, offset=None) -> None:
         self.update_config(sim_config)
 
@@ -133,11 +134,11 @@ class FrankaMobileDrawerTask(RLTask):
         self.dt = 1 / 60.0
 
         self._num_observations = 35 #37 + 3 + 7
-        self._num_actions = 12   # 10 + 1
+        self._num_actions = 12 # 10 + 1
 
         self.translations_orig = None
 
-        RLTask.__init__(self, name, env)
+        RLTaskRecord.__init__(self, name, env)
         return
 
     def update_config(self, sim_config):
@@ -167,9 +168,15 @@ class FrankaMobileDrawerTask(RLTask):
     def set_up_scene(self, scene) -> None:
 
         self._usd_context = omni.usd.get_context()
+        self.get_scene()
         self.get_cabinet()
         self.get_franka()
         
+        # world = World()
+        # while True:
+        #     world.render()
+       
+
         # if self.num_props > 0:
         #     self.get_props()
 
@@ -227,6 +234,39 @@ class FrankaMobileDrawerTask(RLTask):
             scene.add(self._props)
 
         self.init_data()
+    
+    def get_scene(self):
+        import json
+        add_reference_to_stage('/home/nikepupu/Desktop/physcene_33_rigid/main.usd', '/World/scene')
+        with open('/home/nikepupu/Desktop/physcene_33_rigid/contact_graph_cad.json') as f:
+            self.scene_info = json.load(f)
+        # print(self.scene_info["nodes"])
+        for node in self.scene_info["nodes"]:
+            
+            if  'cad_id' in node and node["cad_id"] == "storagefurniture_gpn_6":
+                self.cabinet_orientation = node["orientation"]
+                self.cabinet_position = node["position"]
+                self.cabinet_scale = node["scale"]
+
+        self.cabinet_scale = torch.tensor([0.8, 0.8, 0.8]).to(torch.float32)
+        # self.cabinet_position = torch.tensor([0.0, 0.0, 0.0]).to(torch.float32)
+        self.cabinet_position[0] += 0.5
+        self.cabinet_position[1] -= 0.3
+
+        # self.cabinet_position = [0, 0, 0]
+        # self.cabinet_orientation = torch.tensor([ 0.7071068, 0, 0, 0.7071068]).to(torch.float32)
+        # self.cabinet_orientation  =  torch.tensor([1, 0, 0, 0]).to(torch.float32)
+
+        
+        # self.cabinet_orientation[1] = 0.0
+        # self.cabinet_orientation[2] = 0.0
+        # print('cabinet orientation: ', self.cabinet_orientation)
+        # exit()
+        prims = get_all_matching_child_prims('/World/scene', depth=1)
+        for prim in prims:
+            if 'ceiling' in prim.GetPath().pathString.lower():
+                prim.SetActive(False)
+   
 
     def get_franka(self):
         link_path =  f"/World/envs/env_0/cabinet/link_8"
@@ -239,13 +279,16 @@ class FrankaMobileDrawerTask(RLTask):
 
         
 
-        position = self.cabinet_position + torch.tensor(forwardDir).to(self._device) * 1.5
+        position = self.cabinet_position + forwardDir * 1.5
         position[2] = 0.0
         orientation = self.cabinet_orientation
         franka = FrankaMobile(prim_path=self.default_zero_env_path + "/franka", name="franka",
                                translation=position, orientation=orientation)
+        
         print('franka_position: ', position)
         # exit()
+
+        self.forwardDir = torch.tensor(self.forwardDir).to(self._device).repeat((self._num_envs,1))
         # stage = get_current_stage()
         # prim = stage.GetPrimAtPath(self.default_zero_env_path + "/franka")
         # _physicsMaterialPath = prim.GetPath().AppendChild("physicsMaterial")
@@ -265,18 +308,54 @@ class FrankaMobileDrawerTask(RLTask):
         self._sim_config.apply_articulation_settings(
             "franka", get_prim_at_path(franka.prim_path), self._sim_config.parse_actor_config("franka")
         )
+    def rotate_points_around_z(self, points, center, angle_degrees):
+        """
+        Rotate a set of points around the z-axis by a given angle around a center point.
 
+        :param points: np.array, array of points to rotate.
+        :param center: np.array, the center point around which to rotate.
+        :param angle_degrees: float, rotation angle in degrees.
+        :return: np.array, array of rotated points.
+        """
+        # Convert the angle to radians
+        angle_radians = np.radians(angle_degrees)
+
+        # Create the rotation matrix for z-axis rotation
+        cos_angle, sin_angle = np.cos(angle_radians), np.sin(angle_radians)
+        rotation_matrix = np.array([[cos_angle, -sin_angle, 0],
+                                    [sin_angle,  cos_angle, 0],
+                                    [0,          0,         1]])
+
+        # Translate points to origin (center point becomes the origin)
+        center = center.copy()
+        center[2] = 0
+        translated_points = points - center
+
+        # Apply the rotation
+        rotated_points = np.dot(translated_points, rotation_matrix.T)
+
+        # Translate points back to original center
+        rotated_points += center
+
+        return rotated_points
+    
     def get_cabinet(self):
-        # cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 
-        #                   usd_path="/home/nikepupu/Desktop/Orbit/usd/40147/mobility_relabel_gapartnet_instanceable.usd", 
-        #                   translation=[0,0,0.0], orientation=[0,0,0,1])
         
-        self.cabinet_scale = 0.8 #0.400444550599368
-        self.cabinet_orientation = torch.tensor([ 0.7071068, 0, 0, 0.7071068]).to(torch.float32)
-        # self.cabinet_orientation = torch.tensor([ 1.0, 0, 0, 0]).to(torch.float32)
+        position = self.cabinet_position
+        orientation = self.cabinet_orientation
+        # print('orientation:', orientation)
+        # exit()
+
+        scale = self.cabinet_scale
+        # cabinet.set_world_pose(position, orientation)
+        # cabinet.set_local_scales(scale)
+        scale_max = max(scale)
+        # print('scale_max: ', scale_max)
+        # exit()
+        
         cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 
                           usd_path="/home/nikepupu/Desktop/Orbit/NewUSD/46380/mobility_relabel_gapartnet.usd", 
-                          translation=[0.0,0.0,0.0], orientation=self.cabinet_orientation, scales=[self.cabinet_scale, self.cabinet_scale, self.cabinet_scale])
+                          translation=position, orientation=orientation, scales=scale)
 
         # move cabinet to the ground
         prim_path = self.default_zero_env_path + "/cabinet"
@@ -290,10 +369,8 @@ class FrankaMobileDrawerTask(RLTask):
 
         # print(self.cabinet_offset)
         # exit()
-        self.cabinet_position = position
         drawer.set_world_pose(position, orientation)
-
-        print('cabinet_position: ', self.cabinet_position)
+        print('cabinet_position: ', position)
         
 
         # add physics material
@@ -332,25 +409,100 @@ class FrankaMobileDrawerTask(RLTask):
         
         collision_api.CreateApproximationAttr().Set("convexDecomposition")
 
-        # prim = stage.GetPrimAtPath( self.default_zero_env_path + "/cabinet/link_2/collisions")
-        # collision_api = UsdPhysics.MeshCollisionAPI.Get(stage, prim.GetPath())
-        # if not collision_api:
-        #     collision_api = UsdPhysics.MeshCollisionAPI.Apply(prim)
         
-        # collision_api.CreateApproximationAttr().Set("convexDecomposition")
-
-        # prim = stage.GetPrimAtPath( self.default_zero_env_path + "/cabinet")
-        # mass_api = UsdPhysics.MassAPI.Get(stage, prim.GetPath())
-        # if not mass_api:
-        #     mass_api = UsdPhysics.MassAPI.Apply(prim)
-        #     mass_api.CreateMassAttr().Set(1.0)
-        # else:
-        #     mass_api.GetMassAttr().Set(1.0)
         
                           
-        # self._sim_config.apply_articulation_settings(
-        #     "cabinet", get_prim_at_path(cabinet.prim_path), self._sim_config.parse_actor_config("cabinet")
-        # )
+        self._sim_config.apply_articulation_settings(
+            "cabinet", get_prim_at_path(cabinet.prim_path), self._sim_config.parse_actor_config("cabinet")
+        )
+
+        device = self._device
+        # hand_pos, hand_rot = self.get_ee_pose()
+
+        file_to_read = '/home/nikepupu/Desktop/gapartnet_new_subdivition/partnet_all_annotated_new/annotation/46380/link_anno_gapartnet.json'
+        import json
+        with open(file_to_read) as json_file:
+            data = json.load(json_file)
+        
+        for d in data:
+            if d['link_name'] == 'link_8':
+                corners = torch.tensor(d['bbox'])
+        
+        # print('before: ', corners)
+        # self.corners = scale_max * corners 
+        # print('after: ', self.corners)
+        # exit()
+        num_envs = 1
+        self.bboxes = torch.zeros(( num_envs, 8, 3), device=device)
+        link_path =  f"/World/envs/env_0/cabinet/link_8"
+
+        
+
+        link_path =  f"/World/envs/env_0/cabinet/link_8"
+        prim = get_prim_at_path(link_path)
+        
+        matrix = inv(np.array(omni.usd.get_world_transform_matrix(prim)))
+        
+        self.forwardDir = matrix[0:3, 2]
+        self.forwardDir = self.forwardDir/np.linalg.norm(self.forwardDir)
+        self.forwardDir = torch.tensor(self.forwardDir).to(self._device).repeat((num_envs,1))
+
+        corners = corners.to(self._device)
+        self.handle_short = torch.zeros((num_envs, 3))
+        self.handle_out = torch.zeros((num_envs, 3))
+        self.handle_long = torch.zeros((num_envs, 3))
+
+        for idx in range(num_envs):
+            handle_out = corners[0] - corners[4]
+            handle_long = corners[1] - corners[0]
+            handle_short = corners[3] - corners[0]
+
+
+
+
+            self.handle_short[idx] = handle_short
+            self.handle_out[idx] = handle_out
+            self.handle_long[idx] = handle_long
+        
+        self.handle_short = self.handle_short.to(self._device)
+        self.handle_out = self.handle_out.to(self._device)
+        self.handle_long = self.handle_long.to(self._device)
+        
+        self.corners = corners.repeat((num_envs, 1,1)) * scale_max
+
+        self.corners_obj = corners.repeat((num_envs, 1,1)) * scale_max
+
+        self.centers_obj = ((corners[0] * scale_max +  corners[6] * scale_max )/2.0).repeat((num_envs, 1)).to(torch.float).to(self._device)
+        
+
+
+        # world = World()
+        t = self.cabinet_position
+        # print('self corners: ', self.corners)
+        box = self.rotate_points_around_z(self.corners.cpu().numpy(), np.array([0,0,0]), 90)
+        box = torch.tensor(box)
+        box += torch.tensor(t)
+        # print('box: ', box)
+        self.corners = box
+
+        self.centers_orig = ((corners[0] +  corners[6])/2.0).repeat((num_envs, 1)).to(torch.float).to(self._device) 
+        self.centers = self.centers_orig.clone() 
+
+        # while True:
+            
+        #     color = 4283782485
+        #     my_debugDraw = get_debug_draw_interface()
+        #     corners = self.corners.clone()
+        #     # for idx in range(self._num_envs):
+        #         # corners[idx] = (self.corners[idx]).to(torch.float32).to(self._device)
+            
+        #     corners = corners.cpu().numpy()
+        #     for corner in corners:
+        #         my_debugDraw.draw_line(carb.Float3(corner[0]),color, carb.Float3(corner[4]), color)
+        #         my_debugDraw.draw_line(carb.Float3(corner[1]),color, carb.Float3(corner[0]), color)
+        #         my_debugDraw.draw_line(carb.Float3(corner[3]),color, carb.Float3(corner[0]), color)
+            
+        #     world.step(render=True)
 
     def init_data(self) -> None:
         def get_env_local_pose(env_pos, xformable, device):
@@ -377,144 +529,9 @@ class FrankaMobileDrawerTask(RLTask):
 
         
 
-        device = self._device
-        # hand_pos, hand_rot = self.get_ee_pose()
+        num_envs = 1
 
-        file_to_read = '/home/nikepupu/Desktop/gapartnet_new_subdivition/partnet_all_annotated_new/annotation/46380/link_anno_gapartnet.json'
-        import json
-        with open(file_to_read) as json_file:
-            data = json.load(json_file)
-        
-        for d in data:
-            if d['link_name'] == 'link_8':
-                corners = torch.tensor(d['bbox'])
-
-        corners = corners * self.cabinet_scale
-        self.bboxes = torch.zeros(( self._num_envs, 8, 3), device=device)
-        link_path =  f"/World/envs/env_0/cabinet/link_8"
-        min_box, max_box = omni.usd.get_context().compute_path_world_bounding_box(link_path)
-        min_pt = torch.tensor(np.array(min_box)).to(self._device) - self._env_pos[0]
-        max_pt = torch.tensor(np.array(max_box)).to(self._device) - self._env_pos[0]
-        # self.centers = torch.zeros((self._num_envs, 3)).to(self._device)
-        self.centers_orig = ((min_pt +  max_pt)/2.0).repeat((self._num_envs, 1)).to(torch.float).to(self._device) 
-        self.centers = self.centers_orig.clone() 
-
-        prim = get_prim_at_path(link_path)
-        
-        matrix = inv(np.array(omni.usd.get_world_transform_matrix(prim)))
-        
-        self.forwardDir = matrix[0:3, 2]
-        self.forwardDir = self.forwardDir/np.linalg.norm(self.forwardDir)
-        self.forwardDir = torch.tensor(self.forwardDir).to(self._device).repeat((self._num_envs,1))
-
-        # corners = torch.zeros((8, 3))
-        # # Top right back
-        # corners[0] = torch.tensor([max_pt[0], min_pt[1], max_pt[2]])
-        # # Top right front
-        # corners[1] = torch.tensor([min_pt[0], min_pt[1], max_pt[2]])
-        # # Top left front
-        # corners[2] = torch.tensor([min_pt[0], max_pt[1], max_pt[2]])
-        # # Top left back (Maximum)
-        # corners[3] = max_pt
-        # # Bottom right back
-        # corners[4] = torch.tensor([max_pt[0], min_pt[1], min_pt[2]])
-        # # Bottom right front (Minimum)
-        # corners[5] = min_pt
-        # # Bottom left front
-        # corners[6] = torch.tensor([min_pt[0], max_pt[1], min_pt[2]])
-        # # Bottom left back
-        # corners[7] = torch.tensor([max_pt[0], max_pt[1], min_pt[2]])
-
-        
-        corners = corners.to(self._device)
-        self.handle_short = torch.zeros((self._num_envs, 3))
-        self.handle_out = torch.zeros((self._num_envs, 3))
-        self.handle_long = torch.zeros((self._num_envs, 3))
-
-        for idx in range(self._num_envs):
-            # self.bboxes[idx] = corners + self._env_pos[idx]
-            # handle_short = corners[0] - corners[4]
-            # handle_out = corners[1] - corners[0]
-            # handle_long = corners[3] - corners[0]
-
-            
-            # self.handle_short[idx] = handle_short
-            # self.handle_out[idx] = handle_out
-            # self.handle_long[idx] = handle_long
-
-            handle_out = corners[0] - corners[4]
-            handle_long = corners[1] - corners[0]
-            handle_short = corners[3] - corners[0]
-
-
-
-
-            self.handle_short[idx] = handle_short
-            self.handle_out[idx] = handle_out
-            self.handle_long[idx] = handle_long
-        
-        self.handle_short = self.handle_short.to(self._device)
-        self.handle_out = self.handle_out.to(self._device)
-        self.handle_long = self.handle_long.to(self._device)
-        
-        self.corners = corners.unsqueeze(0).repeat((self._num_envs, 1,1))
-        for idx in range(self._num_envs):
-            self.corners[idx] = self.corners[idx] + self._env_pos[idx] + torch.tensor([0,0, self.cabinet_offset]).to(self._device)
-
-        self.centers_obj = ((corners[0] +  corners[6] )/2.0).repeat((self._num_envs, 1)).to(torch.float).to(self._device)
-
-        # stage = get_current_stage()
-        # hand_pose = get_env_local_pose(
-        #     self._env_pos[0],
-        #     UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/franka/robotiq_85_base_link")),
-        #     self._device,
-        # )
-        # lfinger_pose = get_env_local_pose(
-        #     self._env_pos[0],
-        #     UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/franka/left_inner_finger")),
-        #     self._device,
-        # )
-        # rfinger_pose = get_env_local_pose(
-        #     self._env_pos[0],
-        #     UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/franka/right_inner_finger")),
-        #     self._device,
-        # )
-
-        # finger_pose = torch.zeros(7, device=self._device)
-        # finger_pose[0:3] = (lfinger_pose[0:3] + rfinger_pose[0:3]) / 2.0
-        # finger_pose[3:7] = lfinger_pose[3:7]
-        # hand_pose_inv_rot, hand_pose_inv_pos = tf_inverse(hand_pose[3:7], hand_pose[0:3])
-
-        # grasp_pose_axis = 1
-        # franka_local_grasp_pose_rot, franka_local_pose_pos = tf_combine(
-        #     hand_pose_inv_rot, hand_pose_inv_pos, finger_pose[3:7], finger_pose[0:3]
-        # )
-        # franka_local_pose_pos += torch.tensor([0, 0.04, 0], device=self._device)
-        # self.franka_local_grasp_pos = franka_local_pose_pos.repeat((self._num_envs, 1))
-        # self.franka_local_grasp_rot = franka_local_grasp_pose_rot.repeat((self._num_envs, 1))
-
-        # drawer_local_grasp_pose = torch.tensor([0.3, 0.01, 0.0, 1.0, 0.0, 0.0, 0.0], device=self._device)
-        # self.drawer_local_grasp_pos = drawer_local_grasp_pose[0:3].repeat((self._num_envs, 1))
-        # self.drawer_local_grasp_rot = drawer_local_grasp_pose[3:7].repeat((self._num_envs, 1))
-
-        # self.gripper_forward_axis = torch.tensor([0, 0, 1], device=self._device, dtype=torch.float).repeat(
-        #     (self._num_envs, 1)
-        # )
-        # self.drawer_inward_axis = torch.tensor([-1, 0, 0], device=self._device, dtype=torch.float).repeat(
-        #     (self._num_envs, 1)
-        # )
-        # self.gripper_up_axis = torch.tensor([0, 1, 0], device=self._device, dtype=torch.float).repeat(
-        #     (self._num_envs, 1)
-        # )
-        # self.drawer_up_axis = torch.tensor([0, 0, 1], device=self._device, dtype=torch.float).repeat(
-        #     (self._num_envs, 1)
-        # )
-
-        # self.franka_default_dof_pos = torch.tensor(
-        #     [0 ] * 16, device=self._device
-        # )
-
-        self.actions = torch.zeros((self._num_envs, self._num_actions), device=self._device)
+        self.actions = torch.zeros((num_envs, self._num_actions), device=self._device)
     
     def get_ee_pose_o(self):
         hand_position_w, hand_quat_w = self._frankas._hands.get_world_poses(clone=True)
@@ -539,8 +556,9 @@ class FrankaMobileDrawerTask(RLTask):
 
     def get_ee_pose(self):
         hand_position_w, hand_quat_w = self._frankas._hands.get_world_poses(clone=True)
-
-        hand_position_w = hand_position_w - self._env_pos
+        diff = self._cabinets.get_world_poses(clone=True)[0]
+        diff[:,2] = 0.0
+        hand_position_w = hand_position_w - diff
 
         # rotation_matrix = quaternion_to_matrix( torch.tensor(self.cabinet_orientation).float() ).to(self._device)
         # hand_position_w =  torch.matmul(rotation_matrix.T, hand_position_w.T).T
@@ -581,9 +599,9 @@ class FrankaMobileDrawerTask(RLTask):
         franka_dof_vel = self._frankas.get_joint_velocities(clone=False)
         self.cabinet_dof_pos = self._cabinets.get_joint_positions(clone=False)
         self.cabinet_dof_vel = self._cabinets.get_joint_velocities(clone=False)
-        # self.centers = (self.centers_orig +  self.forwardDir * self.cabinet_dof_pos[:, 3].unsqueeze(-1)).to(torch.float32).to(self._device)
-       
-        hand_pos, _ = self.get_ee_pose_o()
+      
+        # self.franka_rfinger_pos, self.franka_rfinger_rot = self._frankas._lfingers.get_world_poses(clone=False)
+        hand_pos, hand_rot = self.get_ee_pose_o()
         
         dof_pos_scaled = (
             2.0
@@ -591,18 +609,15 @@ class FrankaMobileDrawerTask(RLTask):
             / (self.franka_dof_upper_limits - self.franka_dof_lower_limits)
             - 1.0
         )
-        
-        # point_center = self.centers_obj.to(self._device)
-        
-        forwardDir = torch.tensor([1, 0, 0]).to(self._device)
-        # print('forward Dir: ', self.forwardDir)
-        # exit()
 
-
+        
+        
+        torch.set_printoptions(sci_mode=False)
+        forwardDir = torch.tensor([1.0,0.0,0.0])
         centers = (self.centers_obj.to(self._device) +  forwardDir * self.cabinet_dof_pos[:, 3].unsqueeze(-1)).to(torch.float32).to(self._device)
         tool_pos_diff = hand_pos  - centers
         # print('hand_pos: ', hand_pos)
-        # print('point_center: ', centers)
+        # print('point_center: ', point_center)
         # print('tool_pos_diff: ', tool_pos_diff)
         # exit()
         self.obs_buf = torch.cat(
@@ -619,6 +634,7 @@ class FrankaMobileDrawerTask(RLTask):
             ),
             dim=-1,
         )
+
         # print('obs: ',  self.obs_buf[0,:])
         # exit()
         observations = {self._frankas.name: {"obs_buf": self.obs_buf.to(torch.float32)}}
@@ -661,8 +677,8 @@ class FrankaMobileDrawerTask(RLTask):
         
         self.actions[:, 0:] = (self.actions[:, 0:] + 1.0) / 2.0
         current_joint_positons = self._frankas.get_joint_positions(clone=False)
-        base_positions = current_joint_positons[:, :3]
-        arm_positions = current_joint_positons[:, 3:]
+        # base_positions = current_joint_positons[:, :3]
+        # arm_positions = current_joint_positons[:, 3:]
 
         # print(base_positions.shape)
         # print(arm_positions.shape)
@@ -694,18 +710,10 @@ class FrankaMobileDrawerTask(RLTask):
         if self.translations_orig is None:
             self.translations_orig = self._frankas.get_world_poses(indices=indices)[0]
 
-        # # reset franka
-        # pos = tensor_clamp(
-        #     self.franka_default_dof_pos.unsqueeze(0)
-        #     + 0.25 * (torch.rand((len(env_ids), self.num_franka_dofs), device=self._device) - 0.5),
-        #     self.franka_dof_lower_limits,
-        #     self.franka_dof_upper_limits,
-        # )
+    
         dof_pos = torch.zeros((num_indices, self._frankas.num_dof), device=self._device)
         dof_vel = torch.zeros((num_indices, self._frankas.num_dof), device=self._device)
-        # dof_pos[:, :] = pos
-        # self.franka_dof_targets[env_ids, :] = pos
-        # self.franka_dof_pos[env_ids, :] = pos
+   
 
         # # reset cabinet
         self._cabinets.set_joint_positions(
@@ -715,25 +723,20 @@ class FrankaMobileDrawerTask(RLTask):
             torch.zeros_like(self._cabinets.get_joint_velocities(clone=False)[env_ids]), indices=indices
         )
 
-        # # reset props
-        # if self.num_props > 0:
-        #     self._props.set_world_poses(
-        #         self.default_prop_pos[self.prop_indices[env_ids].flatten()],
-        #         self.default_prop_rot[self.prop_indices[env_ids].flatten()],
-        #         self.prop_indices[env_ids].flatten().to(torch.int32),
-        #     )
+        
         # translation= self.translations_orig.clone()
 
         # all_translation = []
-        # for i in range(self._num_envs):
-        #     perturbed_translation = translation[i] + torch.tensor([ torch.rand(1)[0] * 0.25  , torch.rand(1)[0] * 0.25 , 0.0]).to(self._device)
+        # num_envs = 1
+        # for i in range(num_envs):
+        #     perturbed_translation = translation[i] + torch.tensor([ torch.rand(1)[0]  , torch.rand(1)[0] , 0.0]).to(self._device)
         #     all_translation.append(perturbed_translation)
 
         # all_translation = torch.stack(all_translation).to(self._device)
 
         # all_rotations = []
-        # for i in range(self._num_envs):
-        #     angles = torch.randint(-10, 10, (1,))[0].to(torch.float32)
+        # for i in range(num_envs):
+        #     angles = torch.randint(-90, 90, (1,))[0].to(torch.float32)
         #     angles = angles * np.pi / 180.0
         #     quat = quat_from_angle_axis(angles, torch.tensor([0, 0, 1]).to(torch.float32) ).to(self._device)
         #     all_rotations.append(quat)
@@ -744,7 +747,7 @@ class FrankaMobileDrawerTask(RLTask):
         # print(all_translation.shape)
         # exit()
 
-        # self._frankas.set_world_poses( positions = all_translation, orientations = all_rotations, indices=indices)
+        # self._frankas.set_world_poses( positions = all_translation, indices=indices)
 
         self._frankas.set_joint_position_targets(self.franka_dof_targets[env_ids], indices=indices)
         self._frankas.set_joint_positions(dof_pos, indices=indices)
@@ -755,7 +758,7 @@ class FrankaMobileDrawerTask(RLTask):
         self.progress_buf[env_ids] = 0
 
     def post_reset(self):
-
+        num_envs = 1
         self.num_franka_dofs = self._frankas.num_dof
         self.franka_dof_pos = torch.zeros((self.num_envs, self.num_franka_dofs), device=self._device)
         dof_limits = self._frankas.get_dof_limits()
@@ -764,7 +767,7 @@ class FrankaMobileDrawerTask(RLTask):
         self.franka_dof_speed_scales = torch.ones_like(self.franka_dof_lower_limits)
         self.franka_dof_speed_scales[self._frankas.gripper_indices] = 0.1
         self.franka_dof_targets = torch.zeros(
-            (self._num_envs, self.num_franka_dofs), dtype=torch.float, device=self._device
+            (num_envs, self.num_franka_dofs), dtype=torch.float, device=self._device
         )
 
         cabinet_dof_limits = self._cabinets.get_dof_limits()
@@ -778,7 +781,7 @@ class FrankaMobileDrawerTask(RLTask):
         #     )
 
         # randomize all envs
-        indices = torch.arange(self._num_envs, dtype=torch.int64, device=self._device)
+        indices = torch.arange(num_envs, dtype=torch.int64, device=self._device)
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
@@ -831,8 +834,8 @@ class FrankaMobileDrawerTask(RLTask):
         handle_short = self.handle_short / handle_short_length.unsqueeze(-1).to(torch.float32).to(self._device)
 
 
-        self.franka_lfinger_pos = self._frankas._lfingers.get_world_poses(clone=False)[0] - self._env_pos
-        self.franka_rfinger_pos = self._frankas._rfingers.get_world_poses(clone=False)[0] - self._env_pos
+        self.franka_lfinger_pos = self._frankas._lfingers.get_world_poses(clone=False)[0] 
+        self.franka_rfinger_pos = self._frankas._rfingers.get_world_poses(clone=False)[0] 
         
         gripper_length = torch.norm(self.franka_lfinger_pos - self.franka_rfinger_pos, dim=-1)
 
