@@ -271,9 +271,9 @@ class FrankaMobileDrawerTask(RLTask):
         #                   usd_path="/home/nikepupu/Desktop/Orbit/usd/40147/mobility_relabel_gapartnet_instanceable.usd", 
         #                   translation=[0,0,0.0], orientation=[0,0,0,1])
         
-        self.cabinet_scale = 0.8 #0.400444550599368
-        self.cabinet_orientation = torch.tensor([ 0.7071068, 0, 0, 0.7071068]).to(torch.float32)
-        # self.cabinet_orientation = torch.tensor([ 1.0, 0, 0, 0]).to(torch.float32)
+        self.cabinet_scale = 0.5
+        # self.cabinet_orientation = torch.tensor([ 0.7071068, 0, 0, 0.7071068]).to(torch.float32)
+        self.cabinet_orientation = torch.tensor([ 1.0, 0, 0, 0]).to(torch.float32)
         cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 
                           usd_path="/home/nikepupu/Desktop/Orbit/NewUSD/46380/mobility_relabel_gapartnet.usd", 
                           translation=[0.0,0.0,0.0], orientation=self.cabinet_orientation, scales=[self.cabinet_scale, self.cabinet_scale, self.cabinet_scale])

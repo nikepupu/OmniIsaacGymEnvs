@@ -172,9 +172,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
         self.get_cabinet()
         self.get_franka()
         
-        # world = World()
-        # while True:
-        #     world.render()
+        
        
 
         # if self.num_props > 0:
@@ -182,8 +180,13 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
 
         super().set_up_scene(scene, filter_collisions=False)
 
+
+
         self._frankas = FrankaMobileView(prim_paths_expr="/World/envs/.*/franka", name="franka_view")
         self._cabinets = CabinetView(prim_paths_expr="/World/envs/.*/cabinet", name="cabinet_view")
+        # world = World()
+        # while True:
+        #     world.render()
 
         scene.add(self._frankas)
         scene.add(self._frankas._hands)
@@ -237,7 +240,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
     
     def get_scene(self):
         import json
-        add_reference_to_stage('/home/nikepupu/Desktop/physcene_33_rigid/main.usd', '/World/scene')
+        add_reference_to_stage('/home/nikepupu/Desktop/physcene_33_rigid/main.usd', '/World/envs/env_0/scene')
         with open('/home/nikepupu/Desktop/physcene_33_rigid/contact_graph_cad.json') as f:
             self.scene_info = json.load(f)
         # print(self.scene_info["nodes"])
@@ -247,11 +250,11 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
                 self.cabinet_orientation = node["orientation"]
                 self.cabinet_position = node["position"]
                 self.cabinet_scale = node["scale"]
-
-        self.cabinet_scale = torch.tensor([0.8, 0.8, 0.8]).to(torch.float32)
+        scale = 0.5
+        self.cabinet_scale = torch.tensor([scale, scale, scale]).to(torch.float32)
         # self.cabinet_position = torch.tensor([0.0, 0.0, 0.0]).to(torch.float32)
-        self.cabinet_position[0] += 0.5
-        self.cabinet_position[1] -= 0.3
+        self.cabinet_position[0] += 0.1
+        self.cabinet_position[1] -= 0.1
 
         # self.cabinet_position = [0, 0, 0]
         # self.cabinet_orientation = torch.tensor([ 0.7071068, 0, 0, 0.7071068]).to(torch.float32)
@@ -262,7 +265,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
         # self.cabinet_orientation[2] = 0.0
         # print('cabinet orientation: ', self.cabinet_orientation)
         # exit()
-        prims = get_all_matching_child_prims('/World/scene', depth=1)
+        prims = get_all_matching_child_prims('/World/envs/env_0/scene', depth=1)
         for prim in prims:
             if 'ceiling' in prim.GetPath().pathString.lower():
                 prim.SetActive(False)
@@ -432,7 +435,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
         # self.corners = scale_max * corners 
         # print('after: ', self.corners)
         # exit()
-        num_envs = 1
+        num_envs = self._num_envs
         self.bboxes = torch.zeros(( num_envs, 8, 3), device=device)
         link_path =  f"/World/envs/env_0/cabinet/link_8"
 
@@ -529,7 +532,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
 
         
 
-        num_envs = 1
+        num_envs = self._num_envs
 
         self.actions = torch.zeros((num_envs, self._num_actions), device=self._device)
     
@@ -758,7 +761,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
         self.progress_buf[env_ids] = 0
 
     def post_reset(self):
-        num_envs = 1
+        num_envs = self._num_envs
         self.num_franka_dofs = self._frankas.num_dof
         self.franka_dof_pos = torch.zeros((self.num_envs, self.num_franka_dofs), device=self._device)
         dof_limits = self._frankas.get_dof_limits()
@@ -787,117 +790,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
     def calculate_metrics(self) -> None:
         # import pdb; pdb.set_trace()
         self.cabinet_dof_pos = self._cabinets.get_joint_positions(clone=False)
-        self.centers = (self.centers_orig +  self.forwardDir * self.cabinet_dof_pos[:, 3].unsqueeze(-1)).to(torch.float32).to(self._device)
-      
-        # world = World()
-        
-        # while True:
-        #     self.cabinet_dof_pos = self._cabinets.get_joint_positions(clone=False)
-        #     color = 4283782485
-        #     my_debugDraw = get_debug_draw_interface()
-        #     corners = self.corners.clone()
-        #     for idx in range(self._num_envs):
-        #     # import pdb; pdb.set_trace()
-        #         corners[idx] = (self.corners[idx] + self.forwardDir[idx] * self.cabinet_dof_pos[idx, 3].unsqueeze(-1)).to(torch.float32).to(self._device)
-        #     corners = corners.cpu().numpy()
-        #     for corner in corners:
-        #         my_debugDraw.draw_line(carb.Float3(corner[0]),color, carb.Float3(corner[4]), color)
-        #         my_debugDraw.draw_line(carb.Float3(corner[1]),color, carb.Float3(corner[0]), color)
-        #         my_debugDraw.draw_line(carb.Float3(corner[3]),color, carb.Float3(corner[0]), color)
-            
-        #     world.step(render=True)
-        # handle_out = corners[0] - corners[4]
-        # handle_long = corners[1] - corners[0]
-        # handle_short = corners[3] - corners[0]
-
-        
-        # print(self.centers)
-        hand_pos, hand_rot = self.get_ee_pose()
-        # print(hand_pos)
-        # print(self.centers)
-        # print('========')
-        # exit()
-        tcp_to_obj_delta = hand_pos - self.centers
-        # print('hand_pos: ', hand_pos)
-        # print('self envs: ',  self._env_pos  )
-        # print('self centers: ',  self.centers  )
-        # print('tool_pos_diff: ', tool_pos_diff)
-
-        tcp_to_obj_dist = torch.norm(tcp_to_obj_delta, dim=-1)
-
-        handle_out_length = torch.norm(self.handle_out, dim = -1).to(torch.float32).to(self._device)
-        handle_long_length = torch.norm(self.handle_long, dim = -1).to(torch.float32).to(self._device)
-        handle_short_length = torch.norm(self.handle_short, dim = -1).to(torch.float32).to(self._device)
-
-        handle_out = self.handle_out / handle_out_length.unsqueeze(-1).to(torch.float32).to(self._device)
-        handle_long = self.handle_long / handle_long_length.unsqueeze(-1).to(torch.float32).to(self._device)
-        handle_short = self.handle_short / handle_short_length.unsqueeze(-1).to(torch.float32).to(self._device)
-
-
-        self.franka_lfinger_pos = self._frankas._lfingers.get_world_poses(clone=False)[0] 
-        self.franka_rfinger_pos = self._frankas._rfingers.get_world_poses(clone=False)[0] 
-        
-        gripper_length = torch.norm(self.franka_lfinger_pos - self.franka_rfinger_pos, dim=-1)
-
-        # print(self.franka_lfinger_pos)
-        # print(self.franka_rfinger_pos)
-        
-       
-        short_ltip = ((self.franka_lfinger_pos - self.centers) * handle_short).sum(dim=-1) 
-        short_rtip = ((self.franka_rfinger_pos - self.centers) *handle_short).sum(dim=-1)
-        is_reached_short = (short_ltip * short_rtip) < 0
-
-        is_reached_long = (tcp_to_obj_delta * handle_long).sum(dim=-1).abs() < (handle_long_length / 2.0)
-        is_reached_out = (tcp_to_obj_delta * handle_out).sum(dim=-1).abs() < (handle_out_length / 2.0 )
-
-
-        hand_grip_dir = quat_axis(hand_rot, 1).to(torch.float32).to(self._device)
-        # hand_grip_dir_length = torch.norm(hand_grip_dir)
-        # hand_grip_dir  = hand_grip_dir/ hand_grip_dir_length
-        
-        hand_sep_dir = quat_axis(hand_rot, 0).to(torch.float32).to(self._device)
-        # hand_sep_dir_length = torch.norm(hand_sep_dir)
-        # hand_sep_dir = hand_sep_dir / hand_sep_dir_length
-
-        hand_down_dir = quat_axis(hand_rot, 2).to(torch.float32).to(self._device)
-        # hand_down_dir_length = torch.norm(hand_down_dir)
-        # hand_down_dir = hand_down_dir / hand_down_dir_length
-
-        # dot1 = (-hand_grip_dir * handle_out).sum(dim=-1)
-        dot1 = torch.max((hand_grip_dir * handle_out).sum(dim=-1), (-hand_grip_dir * handle_out).sum(dim=-1))
-        # dot2 = torch.max((hand_sep_dir * handle_short).sum(dim=-1), (-hand_sep_dir * handle_short).sum(dim=-1)) 
-        dot2 = (-hand_sep_dir * handle_short).sum(dim=-1)
-        dot3 = torch.max((hand_down_dir * handle_long).sum(dim=-1), (-hand_down_dir * handle_long).sum(dim=-1))
-        # dot3 = (hand_down_dir * handle_long).sum(dim=-1)
-
-        rot_reward = dot1 + dot2 + dot3 - 3     
-        reaching_reward = - tcp_to_obj_dist +  0.1 * (is_reached_short + is_reached_long + is_reached_out) 
-
-        is_reached =  is_reached_out & is_reached_long & is_reached_short #& (tcp_to_obj_dist < 0.03) 
-
-        # close_reward = is_reached * (gripper_length < 0.02) * 0.1 + 0.1 * (gripper_length > 0.08) * (~is_reached)
-        close_reward =  (0.1 - gripper_length ) * is_reached + 0.1 * ( gripper_length -0.1) * (~is_reached)
-        # print('close reward: ', close_reward)
-
-        grasp_success = is_reached & (gripper_length < handle_short_length + 0.01) & (rot_reward > -0.2)
-
-
-        normalized_dof_pos = (self.cabinet_dof_pos[:, 3] - self.cabinet_dof_lower_limits) / (self.cabinet_dof_upper_limits - self.cabinet_dof_lower_limits)
-        condition_mask = (normalized_dof_pos <= 0.53) & (normalized_dof_pos >= 0.47) & grasp_success
-        
-
-        self.rew_buf[:] = reaching_reward +  rot_reward * 0.5 + 5 * close_reward + grasp_success * 10 * ( 0.1 + normalized_dof_pos)  
-
-        # self.rew_buf = self.rew_buf + self.rew_buf.abs() * rot_reward
-
-        self.rew_buf[condition_mask] += 10.0
-
-        condition_mask =  (normalized_dof_pos >= 0.55)
-
-        self.rew_buf[condition_mask] -= 10.0
-
-        # self.rew_buf[:] = rot_reward
-        # self.rew_buf[:] = rot_reward
+        self.rew_buf[:] = 0.0
         self.rew_buf[:] = self.rew_buf[:].to(torch.float32)
         
 

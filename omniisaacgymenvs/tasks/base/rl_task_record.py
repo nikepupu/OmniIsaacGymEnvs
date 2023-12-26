@@ -156,28 +156,29 @@ class RLTaskRecord(RLTaskInterface):
 
         super().set_up_scene(scene)
 
-        # self._cloner = GridCloner(spacing=self._env_spacing)
-        # self._cloner.define_base_env(self.default_base_env_path)
+        self._cloner = GridCloner(spacing=self._env_spacing)
+        
+        self._cloner.define_base_env(self.default_base_env_path)
 
-        # stage = omni.usd.get_context().get_stage()
-        # UsdGeom.Xform.Define(stage, self.default_zero_env_path)
+        stage = omni.usd.get_context().get_stage()
+        UsdGeom.Xform.Define(stage, self.default_zero_env_path)
 
-        # if self._task_cfg["sim"].get("add_ground_plane", True):
-        #     self._ground_plane_path = "/World/defaultGroundPlane"
-        #     collision_filter_global_paths.append(self._ground_plane_path)
-        #     scene.add_default_ground_plane(prim_path=self._ground_plane_path)
-        # prim_paths = self._cloner.generate_paths("/World/envs/env", self._num_envs)
-        # self._env_pos = self._cloner.clone(
-        #     source_prim_path="/World/envs/env_0", prim_paths=prim_paths, replicate_physics=replicate_physics, copy_from_source=copy_from_source
-        # )
-        # self._env_pos = torch.tensor(np.array(self._env_pos), device=self._device, dtype=torch.float)
-        # if filter_collisions:
-        #     self._cloner.filter_collisions(
-        #         self._env._world.get_physics_context().prim_path,
-        #         "/World/collisions",
-        #         prim_paths,
-        #         collision_filter_global_paths,
-        #     )
+        if self._task_cfg["sim"].get("add_ground_plane", True):
+            self._ground_plane_path = "/World/defaultGroundPlane"
+            collision_filter_global_paths.append(self._ground_plane_path)
+            scene.add_default_ground_plane(prim_path=self._ground_plane_path)
+        prim_paths = self._cloner.generate_paths("/World/envs/env", self._num_envs)
+        self._env_pos = self._cloner.clone(
+            source_prim_path="/World/envs/env_0", prim_paths=prim_paths, replicate_physics=replicate_physics, copy_from_source=copy_from_source
+        )
+        self._env_pos = torch.tensor(np.array(self._env_pos), device=self._device, dtype=torch.float)
+        if filter_collisions:
+            self._cloner.filter_collisions(
+                self._env._world.get_physics_context().prim_path,
+                "/World/collisions",
+                prim_paths,
+                collision_filter_global_paths,
+            )
         if self._env._render:
             self.set_initial_camera_params(camera_position=[10, 10, 3], camera_target=[0, 0, 0])
             if self._task_cfg["sim"].get("add_distant_light", True):
