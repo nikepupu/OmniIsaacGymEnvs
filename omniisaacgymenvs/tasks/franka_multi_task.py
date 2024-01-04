@@ -41,7 +41,7 @@ from omni.isaac.core.utils.torch.rotations import (
     quat_rotate,
     quat_rotate_inverse,
     quat_from_euler_xyz,
-    quat_to_rot_matrices,
+    quats_to_rot_matrices,
     matrices_to_euler_angles,
     quat_from_euler_xyz
 
@@ -588,7 +588,7 @@ class FrankaMobileMultiTask(RLMultiTask):
         # position_w =  torch.matmul(all_orientations.mT, position_w.T).T
         position_w =  all_orientations.mT @ position_w.unsqueeze(-1)
         
-        gripper_rot = quat_to_rot_matrices(hand_quat_w)
+        gripper_rot = quats_to_rot_matrices(hand_quat_w)
         hand_rot_w_object_space =  all_orientations.mT @ gripper_rot
         # hand_rot_w_object_space = matrix_to_6d(hand_rot_w_object_space)
         # hand_rot_w_object_space = hand_rot_w_object_space[:, :, :3].reshape(-1, 9)

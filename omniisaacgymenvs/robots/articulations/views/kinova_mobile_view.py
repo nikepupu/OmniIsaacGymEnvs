@@ -33,7 +33,7 @@ class KinovaMobileView(ArticulationView):
         # )
 
         self._hands = RigidPrimView(
-            prim_paths_expr="/World/envs/.*/kinova/end_effector", name="hands_view", reset_xform_properties=False
+            prim_paths_expr="/World/envs/.*/kinova/end_effector_link", name="hands_view", reset_xform_properties=False
         )
         self._lfingers = RigidPrimView(
             prim_paths_expr="/World/envs/.*/kinova/left_inner_finger_pad", name="lfingers_view", reset_xform_properties=False
@@ -47,13 +47,10 @@ class KinovaMobileView(ArticulationView):
     def initialize(self, physics_sim_view):
         super().initialize(physics_sim_view)
 
-        self._gripper_indices = [self.get_dof_index("finger_joint"), 
-                                 self.get_dof_index("left_inner_knuckle_joint"),
-                                 self.get_dof_index("right_inner_knuckle_joint"),
-                                 self.get_dof_index("left_inner_finger_joint"),
-                                 self.get_dof_index("right_outer_knuckle_joint"),
-                                 self.get_dof_index("right_inner_finger_joint")]
-        # self.gripper_indices = [10, 11, 12,13,14, 15]
+        self._gripper_indices = [self.get_dof_index("end_hand_prismatic_joint_left"), 
+                                 self.get_dof_index("end_hand_prismatic_joint_right")
+                                 ]
+        # self.gripper_indices = [10, 11]
 
     @property
     def gripper_indices(self):

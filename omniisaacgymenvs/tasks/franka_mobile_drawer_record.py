@@ -44,7 +44,7 @@ from omni.isaac.core.utils.torch.rotations import (
     quat_mul,
     quat_rotate,
     quat_rotate_inverse,
-    quat_to_rot_matrices,
+    quats_to_rot_matrices,
     matrices_to_euler_angles,
     quat_from_euler_xyz
 )
@@ -567,7 +567,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
         rotation_matrix = quaternion_to_matrix( torch.tensor(self.cabinet_orientation).float() ).to(self._device)
         all_orientations = rotation_matrix.repeat((self._num_envs, 1,1)).to(torch.float).to(self._device)
 
-        gripper_rot = quat_to_rot_matrices(hand_quat_w)
+        gripper_rot = quats_to_rot_matrices(hand_quat_w)
         hand_rot_w_object_space =  all_orientations.mT @ gripper_rot
 
         tmp  = matrices_to_euler_angles(hand_rot_w_object_space)

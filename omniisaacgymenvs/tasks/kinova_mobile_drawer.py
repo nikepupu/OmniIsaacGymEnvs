@@ -25,15 +25,16 @@ from omni.isaac.core.materials import PhysicsMaterial
 # from omni.debugdraw import get_debug_draw_interface
 from omniisaacgymenvs.tasks.base.rl_task import RLTask
 from omniisaacgymenvs.robots.articulations.cabinet import Cabinet
-# from omniisaacgymenvs.robots.articulations.franka import Franka
+# from omniisaacgymenvs.robots.articulations.kinova import kinova
 from omniisaacgymenvs.robots.articulations.kinova_mobile import KinovaMobile
 from omniisaacgymenvs.robots.articulations.views.kinova_mobile_view import KinovaMobileView
 from omniisaacgymenvs.robots.articulations.views.cabinet_view2 import CabinetView
-# from omniisaacgymenvs.robots.articulations.views.franka_view import FrankaView
+# from omniisaacgymenvs.robots.articulations.views.kinova_view import kinovaView
+
 # from pxr import Usd, UsdGeom
 from pxr import Usd, UsdPhysics, UsdShade, UsdGeom, PhysxSchema
 from typing import Optional, Sequence, Tuple, Union
-from omni.isaac.core.utils.prims import  get_prim_at_path
+from omni.isaac.core.utils.prims import  get_prim_at_path, get_all_matching_child_prims
 from numpy.linalg import inv
 from omni.isaac.core.utils.torch.rotations import (
     quat_apply,
@@ -42,10 +43,12 @@ from omni.isaac.core.utils.torch.rotations import (
     quat_mul,
     quat_rotate,
     quat_rotate_inverse,
-    quat_to_rot_matrices
+    quats_to_rot_matrices,
+    matrices_to_euler_angles
 )
 # from pytorch3d.transforms import quaternion_to_matrix
 from omni.physx.scripts import deformableUtils, physicsUtils
+import pxr
 # def quat_axis(q, axis=0):
 #     '''
 #     :func apply rotation represented by quanternion `q`
@@ -55,6 +58,34 @@ from omni.physx.scripts import deformableUtils, physicsUtils
 #     basis_vec = torch.zeros(q.shape[0], 3, device=q.device)
 #     basis_vec[:, axis] = 1
 #     return quat_rotate(q, basis_vec)
+def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
+    """
+    Convert rotations given as quaternions to rotation matrices.
+    Args:
+        quaternions: quaternions with real part first,
+            as tensor of shape (..., 4).
+    Returns:
+        Rotation matrices as tensor of shape (..., 3, 3).
+    """
+    r, i, j, k = torch.unbind(quaternions, -1)
+    two_s = 2.0 / (quaternions * quaternions).sum(-1)
+
+    mat = torch.stack(
+        (
+            1 - two_s * (j * j + k * k),
+            two_s * (i * j - k * r),
+            two_s * (i * k + j * r),
+            two_s * (i * j + k * r),
+            1 - two_s * (i * i + k * k),
+            two_s * (j * k - i * r),
+            two_s * (i * k - j * r),
+            two_s * (j * k + i * r),
+            1 - two_s * (i * i + j * j),
+        ),
+        -1,
+    )
+    return mat.reshape(quaternions.shape[:-1] + (3, 3))
+
 def quat_axis(q, axis_idx):
     """Extract a specific axis from a quaternion."""
     rotm = quaternion_to_matrix(q)
@@ -101,8 +132,10 @@ class KinovaMobileDrawerTask(RLTask):
         self.distX_offset = 0.04
         self.dt = 1 / 60.0
 
-        self._num_observations = 37 + 3 + 7
-        self._num_actions = 16  # 10 + 1
+        self._num_observations = 35 #37 + 3 + 7
+        self._num_actions = 12   # 10 + 1
+
+        self.translations_orig = None
 
         RLTask.__init__(self, name, env)
         return
@@ -134,8 +167,9 @@ class KinovaMobileDrawerTask(RLTask):
     def set_up_scene(self, scene) -> None:
 
         self._usd_context = omni.usd.get_context()
-        self.get_kinova()
         self.get_cabinet()
+        self.get_kinova()
+        
         # if self.num_props > 0:
         #     self.get_props()
 
@@ -176,7 +210,7 @@ class KinovaMobileDrawerTask(RLTask):
             scene.remove_object("drawers_view", registry_only=True)
         if scene.object_exists("prop_view"):
             scene.remove_object("prop_view", registry_only=True)
-        # self._frankas = FrankaView(prim_paths_expr="/World/envs/.*/franka", name="franka_view")
+        # self._kinovas = kinovaView(prim_paths_expr="/World/envs/.*/kinova", name="kinova_view")
         self._kinovas = KinovaMobileView(prim_paths_expr="/World/envs/.*/kinova", name="kinova_view")
         self._cabinets = CabinetView(prim_paths_expr="/World/envs/.*/cabinet", name="cabinet_view")
 
@@ -195,8 +229,22 @@ class KinovaMobileDrawerTask(RLTask):
         self.init_data()
 
     def get_kinova(self):
-        kinova = KinovaMobile(prim_path=self.default_zero_env_path + "/kinova", name="kinova", translation=[-1.5, 0, 0.00])
 
+        link_path =  f"/World/envs/env_0/cabinet/link_8"
+        prim = get_prim_at_path(link_path)
+        
+        matrix = inv(np.array(omni.usd.get_world_transform_matrix(prim)))
+        
+        forwardDir = matrix[0:3, 2]
+        forwardDir = forwardDir/np.linalg.norm(forwardDir)
+
+        position = self.cabinet_position + torch.tensor(forwardDir).to(self._device) * 1.5
+        position[2] = 0.02
+        orientation = self.cabinet_orientation
+        kinova = KinovaMobile(prim_path=self.default_zero_env_path + "/kinova", name="kinova",
+                               translation=position, orientation=orientation)
+        print('kinova_position: ', position)
+        # exit()
         # stage = get_current_stage()
         # prim = stage.GetPrimAtPath(self.default_zero_env_path + "/kinova")
         # _physicsMaterialPath = prim.GetPath().AppendChild("physicsMaterial")
@@ -222,24 +270,36 @@ class KinovaMobileDrawerTask(RLTask):
         #                   usd_path="/home/nikepupu/Desktop/Orbit/usd/40147/mobility_relabel_gapartnet_instanceable.usd", 
         #                   translation=[0,0,0.0], orientation=[0,0,0,1])
         
+        self.cabinet_scale = 0.5
+        # self.cabinet_orientation = torch.tensor([ 0.7071068, 0, 0, 0.7071068]).to(torch.float32)
+        self.cabinet_orientation = torch.tensor([ 1.0, 0, 0, 0]).to(torch.float32)
         cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 
-                          usd_path="/home/nikepupu/Desktop/Orbit/NewUSD/40147/mobility_relabel_gapartnet.usd", 
-                          translation=[0,0,0.0], orientation=[1,0,0,0])
+                          usd_path="/home/nikepupu/Desktop/Orbit/NewUSD/46380/mobility_relabel_gapartnet.usd", 
+                          translation=[0.0,0.0,0.0], orientation=self.cabinet_orientation, scale=[self.cabinet_scale, self.cabinet_scale, self.cabinet_scale])
 
         # move cabinet to the ground
         prim_path = self.default_zero_env_path + "/cabinet"
         bboxes = omni.usd.get_context().compute_path_world_bounding_box(prim_path)
         min_box = np.array(bboxes[0])
         zmin = min_box[2]
+
         drawer = XFormPrim(prim_path=prim_path)
         position, orientation = drawer.get_world_pose()
-        position[2] += -zmin 
-        self.cabinet_offset = -zmin
+        position[2] += -zmin
+        self.cabinet_offset = -zmin 
+
+        # print(self.cabinet_offset)
+        # exit()
+        self.cabinet_position = position
         drawer.set_world_pose(position, orientation)
+
+        print('cabinet_position: ', self.cabinet_position)
+
+        
 
         # add physics material
         stage = get_current_stage()
-        prim = stage.GetPrimAtPath(self.default_zero_env_path + "/cabinet/link_4/collisions")
+        prim = stage.GetPrimAtPath(self.default_zero_env_path + "/cabinet/link_8/collisions")
         _physicsMaterialPath = prim.GetPath().AppendChild("physicsMaterial")
         material = PhysicsMaterial(
                 prim_path=_physicsMaterialPath,
@@ -248,8 +308,8 @@ class KinovaMobileDrawerTask(RLTask):
                 restitution=0.0,
             )
         # -- enable patch-friction: yields better results!
-        # physx_material_api = PhysxSchema.PhysxMaterialAPI.Apply(material.prim)
-        # physx_material_api.CreateImprovePatchFrictionAttr().Set(True)
+        physx_material_api = PhysxSchema.PhysxMaterialAPI.Apply(material.prim)
+        physx_material_api.CreateImprovePatchFrictionAttr().Set(True)
 
         physicsUtils.add_physics_material_to_prim(
                     stage,
@@ -257,19 +317,36 @@ class KinovaMobileDrawerTask(RLTask):
                     _physicsMaterialPath,
                 )
 
-        # add collision approximation
-        # prim = stage.GetPrimAtPath( self.default_zero_env_path + "/cabinet/link_4/collisions_xform/collisions")
-        # collision_api = UsdPhysics.MeshCollisionAPI.Get(stage, prim.GetPath())
-        # if not collision_api:
-        #     collision_api = UsdPhysics.MeshCollisionAPI.Apply(prim)
-        
-        # collision_api.CreateApproximationAttr().Set("convexDecomposition")
+        prims = get_all_matching_child_prims(self.default_zero_env_path + "/cabinet/link_8/collisions")
+        for prim in prims:
+            physicsUtils.add_physics_material_to_prim(
+                    stage,
+                    prim,
+                    _physicsMaterialPath,
+                )
 
+        # add collision approximation
+        prim = stage.GetPrimAtPath( self.default_zero_env_path + "/cabinet")
+        collision_api = UsdPhysics.MeshCollisionAPI.Get(stage, prim.GetPath())
+        if not collision_api:
+            collision_api = UsdPhysics.MeshCollisionAPI.Apply(prim)
         
-                          
-        self._sim_config.apply_articulation_settings(
-            "cabinet", get_prim_at_path(cabinet.prim_path), self._sim_config.parse_actor_config("cabinet")
-        )
+        collision_api.CreateApproximationAttr().Set("convexDecomposition")
+
+        children = get_all_matching_child_prims(self.default_zero_env_path + "/cabinet")
+            # print('children: ', children)
+        prims = [x for x in children if x.IsA(UsdPhysics.Joint)] 
+        
+        for prim in prims:
+            joint = pxr.UsdPhysics.PrismaticJoint.Get(stage, prim.GetPath())	
+            if joint:
+                upper_limit = joint.GetUpperLimitAttr().Get() #GetAttribute("xformOp:translate").Get()
+                # print(prim.GetPath(), "upper_limit", upper_limit)
+                mobility_prim = prim.GetParent().GetParent()
+                mobility_xform = pxr.UsdGeom.Xformable.Get(stage, mobility_prim.GetPath())
+                scale_factor = mobility_xform.GetOrderedXformOps()[2].Get()[0]
+                # print("scale_factor", scale_factor)
+                joint.CreateUpperLimitAttr(upper_limit * scale_factor)
 
     def init_data(self) -> None:
         def get_env_local_pose(env_pos, xformable, device):
@@ -299,18 +376,18 @@ class KinovaMobileDrawerTask(RLTask):
         device = self._device
         # hand_pos, hand_rot = self.get_ee_pose()
 
-        file_to_read = '/home/nikepupu/Desktop/gapartnet_new_subdivition/partnet_all_annotated_new/annotation/40147/link_anno_gapartnet.json'
+        file_to_read = '/home/nikepupu/Desktop/gapartnet_new_subdivition/partnet_all_annotated_new/annotation/46380/link_anno_gapartnet.json'
         import json
         with open(file_to_read) as json_file:
             data = json.load(json_file)
         
         for d in data:
-            if d['link_name'] == 'link_4':
+            if d['link_name'] == 'link_8':
                 corners = torch.tensor(d['bbox'])
 
-        
+        corners = corners * self.cabinet_scale
         self.bboxes = torch.zeros(( self._num_envs, 8, 3), device=device)
-        link_path =  f"/World/envs/env_0/cabinet/link_4"
+        link_path =  f"/World/envs/env_0/cabinet/link_8"
         min_box, max_box = omni.usd.get_context().compute_path_world_bounding_box(link_path)
         min_pt = torch.tensor(np.array(min_box)).to(self._device) - self._env_pos[0]
         max_pt = torch.tensor(np.array(max_box)).to(self._device) - self._env_pos[0]
@@ -372,29 +449,30 @@ class KinovaMobileDrawerTask(RLTask):
             self.handle_out[idx] = handle_out
             self.handle_long[idx] = handle_long
         
-        self.handle_short = self.handle_short.cuda()
-        self.handle_out = self.handle_out.cuda()
-        self.handle_long = self.handle_long.cuda()
+        self.handle_short = self.handle_short.to(self._device)
+        self.handle_out = self.handle_out.to(self._device)
+        self.handle_long = self.handle_long.to(self._device)
         
         self.corners = corners.unsqueeze(0).repeat((self._num_envs, 1,1))
         for idx in range(self._num_envs):
             self.corners[idx] = self.corners[idx] + self._env_pos[idx] + torch.tensor([0,0, self.cabinet_offset]).to(self._device)
 
+        self.centers_obj = ((corners[0] +  corners[6] )/2.0).repeat((self._num_envs, 1)).to(torch.float).to(self._device)
 
         # stage = get_current_stage()
         # hand_pose = get_env_local_pose(
         #     self._env_pos[0],
-        #     UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/kinova/robotiq_85_base_link")),
+        #     UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/franka/robotiq_85_base_link")),
         #     self._device,
         # )
         # lfinger_pose = get_env_local_pose(
         #     self._env_pos[0],
-        #     UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/kinova/left_inner_finger")),
+        #     UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/franka/left_inner_finger")),
         #     self._device,
         # )
         # rfinger_pose = get_env_local_pose(
         #     self._env_pos[0],
-        #     UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/kinova/right_inner_finger")),
+        #     UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/franka/right_inner_finger")),
         #     self._device,
         # )
 
@@ -404,12 +482,12 @@ class KinovaMobileDrawerTask(RLTask):
         # hand_pose_inv_rot, hand_pose_inv_pos = tf_inverse(hand_pose[3:7], hand_pose[0:3])
 
         # grasp_pose_axis = 1
-        # kinova_local_grasp_pose_rot, kinova_local_pose_pos = tf_combine(
+        # franka_local_grasp_pose_rot, franka_local_pose_pos = tf_combine(
         #     hand_pose_inv_rot, hand_pose_inv_pos, finger_pose[3:7], finger_pose[0:3]
         # )
-        # kinova_local_pose_pos += torch.tensor([0, 0.04, 0], device=self._device)
-        # self.kinova_local_grasp_pos = kinova_local_pose_pos.repeat((self._num_envs, 1))
-        # self.kinova_local_grasp_rot = kinova_local_grasp_pose_rot.repeat((self._num_envs, 1))
+        # franka_local_pose_pos += torch.tensor([0, 0.04, 0], device=self._device)
+        # self.franka_local_grasp_pos = franka_local_pose_pos.repeat((self._num_envs, 1))
+        # self.franka_local_grasp_rot = franka_local_grasp_pose_rot.repeat((self._num_envs, 1))
 
         # drawer_local_grasp_pose = torch.tensor([0.3, 0.01, 0.0, 1.0, 0.0, 0.0, 0.0], device=self._device)
         # self.drawer_local_grasp_pos = drawer_local_grasp_pose[0:3].repeat((self._num_envs, 1))
@@ -428,17 +506,44 @@ class KinovaMobileDrawerTask(RLTask):
         #     (self._num_envs, 1)
         # )
 
-        # self.kinova_default_dof_pos = torch.tensor(
+        # self.franka_default_dof_pos = torch.tensor(
         #     [0 ] * 16, device=self._device
         # )
 
         self.actions = torch.zeros((self._num_envs, self._num_actions), device=self._device)
     
+    def get_ee_pose_o(self):
+        hand_position_w, hand_quat_w = self._kinovas._hands.get_world_poses(clone=True)
+       
+        # print('hand_position_w: ', hand_position_w)
+        # exit()
+        ee_pos_offset = torch.tensor([0.0, 0.0, 0.135]).repeat((self._num_envs, 1)).to(hand_position_w.device)
+        ee_rot_offset = torch.tensor([1.0, 0.0, 0.0, 0.0]).repeat((self._num_envs, 1)).to(hand_quat_w.device)
+        # print(ee_pos_offset.shape)
+        # print(ee_rot_offset.shape)
+        position_w, quat_w = combine_frame_transforms(
+            hand_position_w, hand_quat_w,  ee_pos_offset, ee_rot_offset
+        )
+
+        position_w = position_w - self._cabinets.get_world_poses(clone=True)[0]
+        rotation_matrix = quaternion_to_matrix( torch.tensor(self.cabinet_orientation).float() ).to(self._device)
+        position_w =  torch.matmul(rotation_matrix.T, position_w.T).T
+
+        return position_w, quat_w
+
+
+
     def get_ee_pose(self):
         hand_position_w, hand_quat_w = self._kinovas._hands.get_world_poses(clone=True)
+
         hand_position_w = hand_position_w - self._env_pos
 
-        ee_pos_offset = torch.tensor([0.0, 0.0, 0.13]).repeat((self._num_envs, 1)).to(hand_position_w.device)
+        # rotation_matrix = quaternion_to_matrix( torch.tensor(self.cabinet_orientation).float() ).to(self._device)
+        # hand_position_w =  torch.matmul(rotation_matrix.T, hand_position_w.T).T
+       
+        # print('hand_position_w: ', hand_position_w)
+        # exit()
+        ee_pos_offset = torch.tensor([0.0, 0.0, 0.135]).repeat((self._num_envs, 1)).to(hand_position_w.device)
         ee_rot_offset = torch.tensor([1.0, 0.0, 0.0, 0.0]).repeat((self._num_envs, 1)).to(hand_quat_w.device)
         # print(ee_pos_offset.shape)
         # print(ee_rot_offset.shape)
@@ -448,7 +553,6 @@ class KinovaMobileDrawerTask(RLTask):
         return position_w, quat_w
 
     def get_observations(self) -> dict:
-        hand_pos, hand_rot = self.get_ee_pose()
 
         def get_env_local_pose(env_pos, xformable, device):
             """Compute pose in env-local coordinates"""
@@ -473,48 +577,46 @@ class KinovaMobileDrawerTask(RLTask):
         kinova_dof_vel = self._kinovas.get_joint_velocities(clone=False)
         self.cabinet_dof_pos = self._cabinets.get_joint_positions(clone=False)
         self.cabinet_dof_vel = self._cabinets.get_joint_velocities(clone=False)
-        # self.kinova_dof_pos = kinova_dof_pos
-
-        # (
-        #     self.kinova_grasp_rot,
-        #     self.kinova_grasp_pos,
-        #     self.drawer_grasp_rot,
-        #     self.drawer_grasp_pos,
-        # ) = self.compute_grasp_transforms(
-        #     hand_rot,
-        #     hand_pos,
-        #     self.kinova_local_grasp_rot,
-        #     self.kinova_local_grasp_pos,
-        #     drawer_rot,
-        #     drawer_pos,
-        #     self.drawer_local_grasp_rot,
-        #     self.drawer_local_grasp_pos,
-        # )
-
-        # self.kinova_lfinger_pos, self.kinova_lfinger_rot = self._kinovas._lfingers.get_world_poses(clone=False)
-        # self.kinova_rfinger_pos, self.kinova_rfinger_rot = self._kinovas._lfingers.get_world_poses(clone=False)
-        hand_pos, hand_rot = self.get_ee_pose()
-        tool_pos_diff = hand_pos  - self.centers
+        # self.centers = (self.centers_orig +  self.forwardDir * self.cabinet_dof_pos[:, 3].unsqueeze(-1)).to(torch.float32).to(self._device)
+       
+        hand_pos, _ = self.get_ee_pose_o()
+        
         dof_pos_scaled = (
             2.0
             * (kinova_dof_pos - self.kinova_dof_lower_limits)
             / (self.kinova_dof_upper_limits - self.kinova_dof_lower_limits)
             - 1.0
         )
-        # to_target = self.drawer_grasp_pos - self.kinova_grasp_pos
+        
+        # point_center = self.centers_obj.to(self._device)
+        
+        forwardDir = torch.tensor([1, 0, 0]).to(self._device)
+        # print('forward Dir: ', self.forwardDir)
+        # exit()
+
+
+        centers = (self.centers_obj.to(self._device) +  forwardDir * self.cabinet_dof_pos[:, 3].unsqueeze(-1)).to(torch.float32).to(self._device)
+        tool_pos_diff = hand_pos  - centers
+        # print('hand_pos: ', hand_pos)
+        # print('point_center: ', centers)
+        # print('tool_pos_diff: ', tool_pos_diff)
+        # exit()
         self.obs_buf = torch.cat(
             (
-                dof_pos_scaled,
-                kinova_dof_vel * self.dof_vel_scale,
-                tool_pos_diff,
+                dof_pos_scaled, # 12
+                kinova_dof_vel * self.dof_vel_scale, # 12
+                tool_pos_diff, # 3
+                # hand_pos,
+                # q_o,
                 hand_pos,
-                hand_rot,
-                self.centers,
-                self.cabinet_dof_pos[:, 1].unsqueeze(-1),
-                self.cabinet_dof_vel[:, 1].unsqueeze(-1),
+                centers,
+                self.cabinet_dof_pos[:, 3].unsqueeze(-1), # 1
+                self.cabinet_dof_vel[:, 3].unsqueeze(-1), # 1
             ),
             dim=-1,
         )
+        # print('obs: ',  self.obs_buf[0,:])
+        # exit()
         observations = {self._kinovas.name: {"obs_buf": self.obs_buf.to(torch.float32)}}
         # observations = {self._kinovas.name: {"obs_buf": torch.zeros((self._num_envs, self._num_observations))}}
         # print('obs: ', observations)
@@ -535,28 +637,63 @@ class KinovaMobileDrawerTask(RLTask):
         # targets = self.kinova_dof_targets + self.kinova_dof_speed_scales * self.dt * self.actions * self.action_scale
         # map -1 to 1 to 0 to 1
         self.actions = actions.clone().to(self._device)
-        
-        
-        
+        # mode_prob = (self.actions[:, 0]  + 1.0 )/2
+        # sample 0 or 1 based on mode_prob
+        # mode = torch.bernoulli(mode_prob).to(torch.int32)
 
-        self.actions = (self.actions + 1.0)/2.0
+        # mode = (mode_prob > 0.5).long()
+        # base_indices = torch.nonzero(mode).long()
+        # arm_indices = torch.nonzero(1 - mode).long()
 
-        # mask = (actions[:, -1] > 0).unsqueeze(-1).float()
-        # self.actions[:,-6:] = 1.0 * mask.expand_as(self.actions[:, -6:])
 
-        targets = self.actions *(self.kinova_dof_upper_limits - self.kinova_dof_lower_limits) + self.kinova_dof_lower_limits
+
+        # mode = self.actions[:, 0] <= 0
+        # base_indices =  torch.nonzero(mode).long()
+
+     
+        # mode = self.actions[:, 0] > 0
+        # arm_indices =  torch.nonzero(mode).long()
+
+   
+        
+        self.actions[:, 0:] = (self.actions[:, 0:] + 1.0) / 2.0
+
+        current_joint_positons = self._kinovas.get_joint_positions(clone=False)
+        base_positions = current_joint_positons[:, :3]
+        arm_positions = current_joint_positons[:, 3:]
+
+        # print(base_positions.shape)
+        # print(arm_positions.shape)
+        # print(self.kinova_dof_targets.shape)
+        # exit()
+
+
+        targets = self.actions[:, 0:] *(self.kinova_dof_upper_limits - self.kinova_dof_lower_limits) + self.kinova_dof_lower_limits
 
         self.kinova_dof_targets[:] = tensor_clamp(targets, self.kinova_dof_lower_limits, self.kinova_dof_upper_limits)
+
+        # if len(base_indices) > 0:
+        #     self.kinova_dof_targets[base_indices, :3 ] =  base_positions[base_indices]
+        # if len(arm_indices) > 0:
+        #     self.kinova_dof_targets[arm_indices, 3:] =  arm_positions[arm_indices]
+        
+
+        
         # self.kinova_dof_targets[:,:3] = 0.0
 
         env_ids_int32 = torch.arange(self._kinovas.count, dtype=torch.int32, device=self._device)
 
-
+        # print(self.kinova_dof_targets)
+        # print('dof targets: ', self.kinova_dof_targets[0,:])
+        # exit()
         self._kinovas.set_joint_position_targets(self.kinova_dof_targets, indices=env_ids_int32)
 
     def reset_idx(self, env_ids):
         indices = env_ids.to(dtype=torch.int32)
         num_indices = len(indices)
+
+        if self.translations_orig is None:
+            self.translations_orig = self._kinovas.get_world_poses(indices=indices)[0]
 
         # # reset kinova
         # pos = tensor_clamp(
@@ -586,6 +723,29 @@ class KinovaMobileDrawerTask(RLTask):
         #         self.default_prop_rot[self.prop_indices[env_ids].flatten()],
         #         self.prop_indices[env_ids].flatten().to(torch.int32),
         #     )
+        # translation= self.translations_orig.clone()
+
+        # all_translation = []
+        # for i in range(self._num_envs):
+        #     perturbed_translation = translation[i] + torch.tensor([ torch.rand(1)[0] * 0.25  , torch.rand(1)[0] * 0.25 , 0.0]).to(self._device)
+        #     all_translation.append(perturbed_translation)
+
+        # all_translation = torch.stack(all_translation).to(self._device)
+
+        # all_rotations = []
+        # for i in range(self._num_envs):
+        #     angles = torch.randint(-10, 10, (1,))[0].to(torch.float32)
+        #     angles = angles * np.pi / 180.0
+        #     quat = quat_from_angle_axis(angles, torch.tensor([0, 0, 1]).to(torch.float32) ).to(self._device)
+        #     all_rotations.append(quat)
+        
+        # all_rotations = torch.stack(all_rotations).to(self._device)
+
+        # print(all_rotations.shape)
+        # print(all_translation.shape)
+        # exit()
+
+        # self._kinovas.set_world_poses( positions = all_translation, orientations = all_rotations, indices=indices)
 
         self._kinovas.set_joint_position_targets(self.kinova_dof_targets[env_ids], indices=indices)
         self._kinovas.set_joint_positions(dof_pos, indices=indices)
@@ -623,10 +783,9 @@ class KinovaMobileDrawerTask(RLTask):
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
-       
         # import pdb; pdb.set_trace()
-        # self.cabinet_dof_pos = self._cabinets.get_joint_positions(clone=False)
-        # self.centers = (self.centers_orig +  self.forwardDir * self.cabinet_dof_pos[:, 1].unsqueeze(-1)).to(torch.float32).to(self._device)
+        self.cabinet_dof_pos = self._cabinets.get_joint_positions(clone=False)
+        self.centers = (self.centers_orig +  self.forwardDir * self.cabinet_dof_pos[:, 3].unsqueeze(-1)).to(torch.float32).to(self._device)
       
         # world = World()
         
@@ -637,7 +796,7 @@ class KinovaMobileDrawerTask(RLTask):
         #     corners = self.corners.clone()
         #     for idx in range(self._num_envs):
         #     # import pdb; pdb.set_trace()
-        #         corners[idx] = (self.corners[idx] + self.forwardDir[idx] * self.cabinet_dof_pos[idx, 1].unsqueeze(-1)).to(torch.float32).to(self._device)
+        #         corners[idx] = (self.corners[idx] + self.forwardDir[idx] * self.cabinet_dof_pos[idx, 3].unsqueeze(-1)).to(torch.float32).to(self._device)
         #     corners = corners.cpu().numpy()
         #     for corner in corners:
         #         my_debugDraw.draw_line(carb.Float3(corner[0]),color, carb.Float3(corner[4]), color)
@@ -664,116 +823,82 @@ class KinovaMobileDrawerTask(RLTask):
 
         tcp_to_obj_dist = torch.norm(tcp_to_obj_delta, dim=-1)
 
-        # handle_out_length = torch.norm(self.handle_out, dim = -1).cuda()
-        # handle_long_length = torch.norm(self.handle_long, dim = -1).cuda()
-        # handle_short_length = torch.norm(self.handle_short, dim = -1).cuda()
+        handle_out_length = torch.norm(self.handle_out, dim = -1).to(torch.float32).to(self._device)
+        handle_long_length = torch.norm(self.handle_long, dim = -1).to(torch.float32).to(self._device)
+        handle_short_length = torch.norm(self.handle_short, dim = -1).to(torch.float32).to(self._device)
 
-        # handle_out = self.handle_out / handle_out_length.unsqueeze(-1).cuda()
-        # handle_long = self.handle_long / handle_long_length.unsqueeze(-1).cuda()
-        # handle_short = self.handle_short / handle_short_length.unsqueeze(-1).cuda()
+        handle_out = self.handle_out / handle_out_length.unsqueeze(-1).to(torch.float32).to(self._device)
+        handle_long = self.handle_long / handle_long_length.unsqueeze(-1).to(torch.float32).to(self._device)
+        handle_short = self.handle_short / handle_short_length.unsqueeze(-1).to(torch.float32).to(self._device)
 
 
-        # self.kinova_lfinger_pos = self._kinovas._lfingers.get_world_poses(clone=False)[0] - self._env_pos
-        # self.kinova_rfinger_pos = self._kinovas._rfingers.get_world_poses(clone=False)[0] - self._env_pos
+        self.kinova_lfinger_pos = self._kinovas._lfingers.get_world_poses(clone=False)[0] - self._env_pos
+        self.kinova_rfinger_pos = self._kinovas._rfingers.get_world_poses(clone=False)[0] - self._env_pos
         
-        # gripper_length = torch.norm(self.kinova_lfinger_pos - self.kinova_rfinger_pos, dim=-1)
+        gripper_length = torch.norm(self.kinova_lfinger_pos - self.kinova_rfinger_pos, dim=-1)
 
-        # # print(self.kinova_lfinger_pos)
-        # # print(self.kinova_rfinger_pos)
+        # print(self.kinova_lfinger_pos)
+        # print(self.kinova_rfinger_pos)
         
        
-        # short_ltip = ((self.kinova_lfinger_pos - self.centers) * handle_short).sum(dim=-1) 
-        # short_rtip = ((self.kinova_rfinger_pos - self.centers) *handle_short).sum(dim=-1)
-        # is_reached_short = (short_ltip * short_rtip) < 0
+        short_ltip = ((self.kinova_lfinger_pos - self.centers) * handle_short).sum(dim=-1) 
+        short_rtip = ((self.kinova_rfinger_pos - self.centers) *handle_short).sum(dim=-1)
+        is_reached_short = (short_ltip * short_rtip) < 0
 
-        # is_reached_long = (tcp_to_obj_delta * handle_long).sum(dim=-1).abs() < handle_long_length / 2.0
-        # is_reached_out = (tcp_to_obj_delta * handle_out).sum(dim=-1).abs() < handle_out_length / 2.0
+        is_reached_long = (tcp_to_obj_delta * handle_long).sum(dim=-1).abs() < (handle_long_length / 2.0)
+        is_reached_out = (tcp_to_obj_delta * handle_out).sum(dim=-1).abs() < (handle_out_length / 2.0 )
 
-
-        # hand_grip_dir = quat_axis(hand_rot, 2).cuda()
-        # # hand_grip_dir_length = torch.norm(hand_grip_dir)
-        # # hand_grip_dir  = hand_grip_dir/ hand_grip_dir_length
+        # 1 0 2
+        hand_grip_dir = quat_axis(hand_rot, 2).to(torch.float32).to(self._device)
+        # hand_grip_dir_length = torch.norm(hand_grip_dir)
+        # hand_grip_dir  = hand_grip_dir/ hand_grip_dir_length
         
-        # hand_sep_dir = quat_axis(hand_rot, 0).cuda()
-        # # hand_sep_dir_length = torch.norm(hand_sep_dir)
-        # # hand_sep_dir = hand_sep_dir / hand_sep_dir_length
+        hand_sep_dir = quat_axis(hand_rot, 0).to(torch.float32).to(self._device)
+        # hand_sep_dir_length = torch.norm(hand_sep_dir)
+        # hand_sep_dir = hand_sep_dir / hand_sep_dir_length
 
-        # hand_down_dir = quat_axis(hand_rot, 1).cuda()
-        # # hand_down_dir_length = torch.norm(hand_down_dir)
-        # # hand_down_dir = hand_down_dir / hand_down_dir_length
+        hand_down_dir = quat_axis(hand_rot, 1).to(torch.float32).to(self._device)
+        # hand_down_dir_length = torch.norm(hand_down_dir)
+        # hand_down_dir = hand_down_dir / hand_down_dir_length
 
-        # dot1 = (hand_grip_dir * handle_out).sum(dim=-1)
-        # # dot1 = torch.max((hand_grip_dir * handle_out).sum(dim=-1), (-hand_grip_dir * handle_out).sum(dim=-1))
-        # dot2 = torch.max((hand_sep_dir * handle_short).sum(dim=-1), (-hand_sep_dir * handle_short).sum(dim=-1)) 
-        # # dot2 = (-hand_sep_dir * handle_short).sum(dim=-1)
-        # dot3 = torch.max((hand_down_dir * handle_long).sum(dim=-1), (-hand_down_dir * handle_long).sum(dim=-1))
-        # # dot3 = (hand_down_dir * handle_long).sum(dim=-1)
+        # dot1 = (-hand_grip_dir * handle_out).sum(dim=-1)
+        dot1 = torch.max((hand_grip_dir * handle_out).sum(dim=-1), (-hand_grip_dir * handle_out).sum(dim=-1))
+        dot2 = torch.max((hand_sep_dir * handle_short).sum(dim=-1), (-hand_sep_dir * handle_short).sum(dim=-1)) 
+        dot2 = (-hand_sep_dir * handle_short).sum(dim=-1)
+        dot3 = torch.max((hand_down_dir * handle_long).sum(dim=-1), (-hand_down_dir * handle_long).sum(dim=-1))
+        # dot3 = (hand_down_dir * handle_long).sum(dim=-1)
 
-        # rot_reward = dot1 + dot2 + dot3 - 3     
-        reaching_reward = - tcp_to_obj_dist #+  0.1 * (is_reached_short + is_reached_long + is_reached_out) 
+        rot_reward = dot1 + dot2 + dot3 - 3     
+        reaching_reward = - tcp_to_obj_dist +  0.1 * (is_reached_short + is_reached_long + is_reached_out) 
 
-        # is_reached =  is_reached_out & is_reached_long & is_reached_short #& (tcp_to_obj_dist < 0.03) 
+        is_reached =  is_reached_out & is_reached_long & is_reached_short #& (tcp_to_obj_dist < 0.03) 
 
-        # # close_reward = is_reached * (gripper_length < 0.02) * 0.1 + 0.1 * (gripper_length > 0.08) * (~is_reached)
-        # close_reward =  (0.1 - gripper_length/2.0 ) * is_reached + 1.0 * ( gripper_length/2.0 -0.1) * (~is_reached)
-        # # print('close reward: ', close_reward)
+        # close_reward = is_reached * (gripper_length < 0.02) * 0.1 + 0.1 * (gripper_length > 0.08) * (~is_reached)
+        close_reward =  (0.1 - gripper_length ) * is_reached + 0.1 * ( gripper_length -0.1) * (~is_reached)
+        # print('close reward: ', close_reward)
 
-        # grasp_success = is_reached & (rot_reward > -0.2) & (gripper_length < handle_short_length + 0.03)
-        # if torch.any(grasp_success):
-        #     print('grasp success')
-        #     num_true = grasp_success.sum()
-        #     if num_true >= 3:
-        #         print(torch.nonzero(grasp_success).squeeze())
-        #         print()
-        #         timeline = omni.timeline.get_timeline_interface()
-        #         timeline.pause()
-        #         from omni.isaac.core import World
-        #         world = World()
-        #         while True:
-        #             world.step(render=True)
+        grasp_success = is_reached & (gripper_length < handle_short_length + 0.02) & (rot_reward > -0.2)
 
 
-        # normalized_dof_pos = (self.cabinet_dof_pos[:, 1] - self.cabinet_dof_lower_limits) / (self.cabinet_dof_upper_limits - self.cabinet_dof_lower_limits)
-        # condition_mask = (normalized_dof_pos > 0.95) & grasp_success
+        normalized_dof_pos = (self.cabinet_dof_pos[:, 3] - self.cabinet_dof_lower_limits) / (self.cabinet_dof_upper_limits - self.cabinet_dof_lower_limits)
+        condition_mask = (normalized_dof_pos <= 0.53) & (normalized_dof_pos >= 0.47) & grasp_success
         
 
-        self.rew_buf[:] = reaching_reward #rot_reward * 0.5 + 5 * close_reward + grasp_success *5 * ( 0.2 + normalized_dof_pos)  
+        self.rew_buf[:] = reaching_reward +  rot_reward * 0.5 + 5 * close_reward + grasp_success * 10 * ( 0.1 + normalized_dof_pos)  
 
         # self.rew_buf = self.rew_buf + self.rew_buf.abs() * rot_reward
 
-        # self.rew_buf[condition_mask] += 2.0
+        self.rew_buf[condition_mask] += 10.0
+
+        condition_mask =  (normalized_dof_pos >= 0.55)
+
+        self.rew_buf[condition_mask] -= 10.0
+
+
         # self.rew_buf[:] = rot_reward
         # self.rew_buf[:] = rot_reward
-        # self.rew_buf[:] = self.rew_buf[:].to(torch.float32)
-        # print()
-        # print('reward: ', self.rew_buf )
-        # self.rew_buf[:] = self.compute_kinova_reward(
-        #     self.reset_buf,
-        #     self.progress_buf,
-        #     self.actions,
-        #     self.cabinet_dof_pos,
-        #     self.kinova_grasp_pos,
-        #     self.drawer_grasp_pos,
-        #     self.kinova_grasp_rot,
-        #     self.drawer_grasp_rot,
-        #     self.kinova_lfinger_pos,
-        #     self.kinova_rfinger_pos,
-        #     self.gripper_forward_axis,
-        #     self.drawer_inward_axis,
-        #     self.gripper_up_axis,
-        #     self.drawer_up_axis,
-        #     self._num_envs,
-        #     self.dist_reward_scale,
-        #     self.rot_reward_scale,
-        #     self.around_handle_reward_scale,
-        #     self.open_reward_scale,
-        #     self.finger_dist_reward_scale,
-        #     self.action_penalty_scale,
-        #     self.distX_offset,
-        #     self._max_episode_length,
-        #     self.kinova_dof_pos,
-        #     self.finger_close_reward_scale,
-        # )
+        self.rew_buf[:] = self.rew_buf[:].to(torch.float32)
+        
 
     def is_done(self) -> None:
         # reset if drawer is open or max length reached
@@ -781,131 +906,3 @@ class KinovaMobileDrawerTask(RLTask):
         self.reset_buf = torch.where(
             self.progress_buf >= self._max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf
         )
-
-    def compute_grasp_transforms(
-        self,
-        hand_rot,
-        hand_pos,
-        kinova_local_grasp_rot,
-        kinova_local_grasp_pos,
-        drawer_rot,
-        drawer_pos,
-        drawer_local_grasp_rot,
-        drawer_local_grasp_pos,
-    ):
-
-        global_kinova_rot, global_kinova_pos = tf_combine(
-            hand_rot, hand_pos, kinova_local_grasp_rot, kinova_local_grasp_pos
-        )
-        global_drawer_rot, global_drawer_pos = tf_combine(
-            drawer_rot, drawer_pos, drawer_local_grasp_rot, drawer_local_grasp_pos
-        )
-
-        return global_kinova_rot, global_kinova_pos, global_drawer_rot, global_drawer_pos
-
-    # def compute_kinova_reward(
-    #     self,
-    #     reset_buf,
-    #     progress_buf,
-    #     actions,
-    #     cabinet_dof_pos,
-    #     kinova_grasp_pos,
-    #     drawer_grasp_pos,
-    #     kinova_grasp_rot,
-    #     drawer_grasp_rot,
-    #     kinova_lfinger_pos,
-    #     kinova_rfinger_pos,
-    #     gripper_forward_axis,
-    #     drawer_inward_axis,
-    #     gripper_up_axis,
-    #     drawer_up_axis,
-    #     num_envs,
-    #     dist_reward_scale,
-    #     rot_reward_scale,
-    #     around_handle_reward_scale,
-    #     open_reward_scale,
-    #     finger_dist_reward_scale,
-    #     action_penalty_scale,
-    #     distX_offset,
-    #     max_episode_length,
-    #     joint_positions,
-    #     finger_close_reward_scale,
-    # ):
-    #     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, int, float, float, float, float, float, float, float, float, Tensor) -> Tuple[Tensor, Tensor]
-
-    #     # distance from hand to the drawer
-    #     d = torch.norm(kinova_grasp_pos - drawer_grasp_pos, p=2, dim=-1)
-    #     dist_reward = 1.0 / (1.0 + d**2)
-    #     dist_reward *= dist_reward
-    #     dist_reward = torch.where(d <= 0.02, dist_reward * 2, dist_reward)
-
-    #     axis1 = tf_vector(kinova_grasp_rot, gripper_forward_axis)
-    #     axis2 = tf_vector(drawer_grasp_rot, drawer_inward_axis)
-    #     axis3 = tf_vector(kinova_grasp_rot, gripper_up_axis)
-    #     axis4 = tf_vector(drawer_grasp_rot, drawer_up_axis)
-
-    #     dot1 = (
-    #         torch.bmm(axis1.view(num_envs, 1, 3), axis2.view(num_envs, 3, 1)).squeeze(-1).squeeze(-1)
-    #     )  # alignment of forward axis for gripper
-    #     dot2 = (
-    #         torch.bmm(axis3.view(num_envs, 1, 3), axis4.view(num_envs, 3, 1)).squeeze(-1).squeeze(-1)
-    #     )  # alignment of up axis for gripper
-    #     # reward for matching the orientation of the hand to the drawer (fingers wrapped)
-    #     rot_reward = 0.5 * (torch.sign(dot1) * dot1**2 + torch.sign(dot2) * dot2**2)
-
-    #     # bonus if left finger is above the drawer handle and right below
-    #     around_handle_reward = torch.zeros_like(rot_reward)
-    #     around_handle_reward = torch.where(
-    #         kinova_lfinger_pos[:, 2] > drawer_grasp_pos[:, 2],
-    #         torch.where(
-    #             kinova_rfinger_pos[:, 2] < drawer_grasp_pos[:, 2], around_handle_reward + 0.5, around_handle_reward
-    #         ),
-    #         around_handle_reward,
-    #     )
-    #     # reward for distance of each finger from the drawer
-    #     finger_dist_reward = torch.zeros_like(rot_reward)
-    #     lfinger_dist = torch.abs(kinova_lfinger_pos[:, 2] - drawer_grasp_pos[:, 2])
-    #     rfinger_dist = torch.abs(kinova_rfinger_pos[:, 2] - drawer_grasp_pos[:, 2])
-    #     finger_dist_reward = torch.where(
-    #         kinova_lfinger_pos[:, 2] > drawer_grasp_pos[:, 2],
-    #         torch.where(
-    #             kinova_rfinger_pos[:, 2] < drawer_grasp_pos[:, 2],
-    #             (0.04 - lfinger_dist) + (0.04 - rfinger_dist),
-    #             finger_dist_reward,
-    #         ),
-    #         finger_dist_reward,
-    #     )
-
-    #     finger_close_reward = torch.zeros_like(rot_reward)
-    #     finger_close_reward = torch.where(
-    #         d <= 0.03, (0.04 - joint_positions[:, 7]) + (0.04 - joint_positions[:, 8]), finger_close_reward
-    #     )
-
-    #     # regularization on the actions (summed for each environment)
-    #     action_penalty = torch.sum(actions**2, dim=-1)
-
-    #     # how far the cabinet has been opened out
-    #     open_reward = cabinet_dof_pos[:, 3] * around_handle_reward + cabinet_dof_pos[:, 3]  # drawer_top_joint
-
-    #     rewards = (
-    #         dist_reward_scale * dist_reward
-    #         + rot_reward_scale * rot_reward
-    #         + around_handle_reward_scale * around_handle_reward
-    #         + open_reward_scale * open_reward
-    #         + finger_dist_reward_scale * finger_dist_reward
-    #         - action_penalty_scale * action_penalty
-    #         + finger_close_reward * finger_close_reward_scale
-    #     )
-
-    #     # bonus for opening drawer properly
-    #     rewards = torch.where(cabinet_dof_pos[:, 3] > 0.01, rewards + 0.5, rewards)
-    #     rewards = torch.where(cabinet_dof_pos[:, 3] > 0.2, rewards + around_handle_reward, rewards)
-    #     rewards = torch.where(cabinet_dof_pos[:, 3] > 0.39, rewards + (2.0 * around_handle_reward), rewards)
-
-    #     # # prevent bad style in opening drawer
-    #     # rewards = torch.where(kinova_lfinger_pos[:, 0] < drawer_grasp_pos[:, 0] - distX_offset,
-    #     #                       torch.ones_like(rewards) * -1, rewards)
-    #     # rewards = torch.where(kinova_rfinger_pos[:, 0] < drawer_grasp_pos[:, 0] - distX_offset,
-    #     #                       torch.ones_like(rewards) * -1, rewards)
-
-    #     return rewards

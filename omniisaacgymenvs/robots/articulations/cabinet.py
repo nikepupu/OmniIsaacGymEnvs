@@ -44,7 +44,7 @@ class Cabinet(Robot):
         self._position = torch.tensor([0.0, 0.0, 0.4]) if translation is None else translation
         self._orientation = torch.tensor([0.1, 0.0, 0.0, 0.0]) if orientation is None else orientation
 
-        self._scales = torch.tensor([1.0,1.0,1.0]) if scales is None else scales
+        self._scales = torch.tensor([1.0,1.0,1.0]) if scale is None else scale
 
         super().__init__(
             prim_path=prim_path,
@@ -53,5 +53,4 @@ class Cabinet(Robot):
             orientation=self._orientation,
             scale=self._scale,
             articulation_controller=None,
-            scale = self._scales,
         )

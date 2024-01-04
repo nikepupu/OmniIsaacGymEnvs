@@ -44,7 +44,7 @@ from omni.isaac.core.utils.torch.rotations import (
     quat_mul,
     quat_rotate,
     quat_rotate_inverse,
-    quat_to_rot_matrices
+    quats_to_rot_matrices
 )
 # from pytorch3d.transforms import quaternion_to_matrix
 from omni.physx.scripts import deformableUtils, physicsUtils
@@ -275,7 +275,7 @@ class FrankaMobileDrawerTask(RLTask):
         self.cabinet_orientation = torch.tensor([ 1.0, 0, 0, 0]).to(torch.float32)
         cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 
                           usd_path="/home/nikepupu/Desktop/Orbit/NewUSD/46380/mobility_relabel_gapartnet.usd", 
-                          translation=[0.0,0.0,0.0], orientation=self.cabinet_orientation, scales=[self.cabinet_scale, self.cabinet_scale, self.cabinet_scale])
+                          translation=[0.0,0.0,0.0], orientation=self.cabinet_orientation, scale=[self.cabinet_scale, self.cabinet_scale, self.cabinet_scale])
 
         # move cabinet to the ground
         prim_path = self.default_zero_env_path + "/cabinet"
@@ -675,6 +675,8 @@ class FrankaMobileDrawerTask(RLTask):
         targets = self.actions[:, 0:] *(self.franka_dof_upper_limits - self.franka_dof_lower_limits) + self.franka_dof_lower_limits
 
         self.franka_dof_targets[:] = tensor_clamp(targets, self.franka_dof_lower_limits, self.franka_dof_upper_limits)
+
+        
 
         # if len(base_indices) > 0:
         #     self.franka_dof_targets[base_indices, :3 ] =  base_positions[base_indices]
