@@ -43,6 +43,7 @@ from omniisaacgymenvs.utils.hydra_cfg.hydra_utils import *
 from omniisaacgymenvs.utils.hydra_cfg.reformat import omegaconf_to_dict, print_dict
 from omniisaacgymenvs.utils.task_util import initialize_task
 
+import time
 
 @hydra.main(version_base=None, config_name="config", config_path="../cfg")
 def parse_hydra_configs(cfg: DictConfig):
@@ -93,6 +94,7 @@ def parse_hydra_configs(cfg: DictConfig):
     cfg_dict["seed"] = cfg.seed
     task = initialize_task(cfg_dict, env)
 
+
     num_frames = 0
     first_frame = True
     prev_time = time.time()
@@ -116,6 +118,7 @@ def parse_hydra_configs(cfg: DictConfig):
                 num_frames += 1
 
             env.step(actions)
+
         else:
             env.world.step(render=render)
 

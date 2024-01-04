@@ -117,8 +117,10 @@ class FrankaMobile(Robot):
         max_force = [x * 2  for x in max_force]
         max_velocity = [300 ] * 3 +  [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]] + [0.2, 0.2]
         max_velocity = [x * 2  for x in max_velocity]
+
         # decrease max velocity by half
         # max_velocity = [x / 2 for x in max_velocity]
+
         for i, dof in enumerate(dof_paths):
             # print(f"{self.prim_path}/{dof}")
             set_drive(
@@ -135,7 +137,7 @@ class FrankaMobile(Robot):
             )
             # print('Done')
 
-    def set_kinova_properties(self, stage, prim):
+    def set_franka_properties(self, stage, prim):
         for link_prim in prim.GetChildren():
             if link_prim.HasAPI(PhysxSchema.PhysxRigidBodyAPI): 
                 rb = PhysxSchema.PhysxRigidBodyAPI.Get(stage, link_prim.GetPrimPath())
