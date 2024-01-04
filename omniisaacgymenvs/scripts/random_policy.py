@@ -37,6 +37,7 @@ from omniisaacgymenvs.utils.hydra_cfg.hydra_utils import *
 from omniisaacgymenvs.utils.hydra_cfg.reformat import omegaconf_to_dict, print_dict
 from omniisaacgymenvs.utils.task_util import initialize_task
 
+import time
 
 @hydra.main(version_base=None, config_name="config", config_path="../cfg")
 def parse_hydra_configs(cfg: DictConfig):
@@ -64,7 +65,8 @@ def parse_hydra_configs(cfg: DictConfig):
     cfg.seed = set_seed(cfg.seed, torch_deterministic=cfg.torch_deterministic)
     cfg_dict["seed"] = cfg.seed
     task = initialize_task(cfg_dict, env)
-
+    s = time.time()
+    
     while env._simulation_app.is_running():
         if env._world.is_playing():
             if env._world.current_time_step_index == 0:
@@ -75,6 +77,11 @@ def parse_hydra_configs(cfg: DictConfig):
             env._task.pre_physics_step(actions)
             env._world.step(render=render)
             env.sim_frame_count += 1
+            c = time.time()
+            if c - s > 1:
+                print('FPS: ', env.sim_frame_count / (c - s))
+                s = c
+                env.sim_frame_count = 0
             env._task.post_physics_step()
         else:
             env._world.step(render=render)

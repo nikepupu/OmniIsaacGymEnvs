@@ -111,8 +111,10 @@ class FrankaMobile(Robot):
         default_dof_pos = [math.degrees(x) for x in [0.0, 0.0, 0.0, 0.0, -1.0, 0.0, -2.2, 0.0, 2.4, 0.8]] + [0.02, 0.02]
         stiffness = [800]*3 + [400 * np.pi / 180] * 7 + [10000] * 2
         damping =  [200]*3 + [80 * np.pi / 180] * 7 + [100] * 2
-        max_force = [200, 200, 100, 87, 87, 87, 87, 12, 12, 12, 200, 200]
-        max_velocity = [100 ] * 3 +  [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]] + [0.2, 0.2]
+        max_force = [300, 300, 300, 87, 87, 87, 87, 12, 12, 12, 200, 200]
+        max_force = [x * 2  for x in max_force]
+        max_velocity = [300 ] * 3 +  [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]] + [0.2, 0.2]
+        max_velocity = [x * 2  for x in max_velocity]
 
         for i, dof in enumerate(dof_paths):
             print(f"{self.prim_path}/{dof}")
@@ -130,7 +132,7 @@ class FrankaMobile(Robot):
             )
             print('Done')
 
-    def set_kinova_properties(self, stage, prim):
+    def set_franka_properties(self, stage, prim):
         for link_prim in prim.GetChildren():
             if link_prim.HasAPI(PhysxSchema.PhysxRigidBodyAPI): 
                 rb = PhysxSchema.PhysxRigidBodyAPI.Get(stage, link_prim.GetPrimPath())

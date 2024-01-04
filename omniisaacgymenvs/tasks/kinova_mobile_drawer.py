@@ -42,6 +42,7 @@ from omni.isaac.core.utils.torch.rotations import (
     quat_mul,
     quat_rotate,
     quat_rotate_inverse,
+    quat_to_rot_matrices
 )
 # from pytorch3d.transforms import quaternion_to_matrix
 from omni.physx.scripts import deformableUtils, physicsUtils
