@@ -27,6 +27,7 @@ class FrankaMobile(Robot):
         usd_path: Optional[str] = None,
         translation: Optional[torch.tensor] = None,
         orientation: Optional[torch.tensor] = None,
+        # scale: Optional[torch.tensor] = None,
     ) -> None:
         """[summary]"""
 
@@ -46,6 +47,7 @@ class FrankaMobile(Robot):
             name=name,
             translation=self._position,
             orientation=self._orientation,
+            # scale = scale,
             articulation_controller=None,
         )
 
@@ -116,8 +118,11 @@ class FrankaMobile(Robot):
         max_velocity = [300 ] * 3 +  [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]] + [0.2, 0.2]
         max_velocity = [x * 2  for x in max_velocity]
 
+        # decrease max velocity by half
+        # max_velocity = [x / 2 for x in max_velocity]
+
         for i, dof in enumerate(dof_paths):
-            print(f"{self.prim_path}/{dof}")
+            # print(f"{self.prim_path}/{dof}")
             set_drive(
                 prim_path=f"{self.prim_path}/{dof}",
                 drive_type=drive_type[i],
@@ -130,7 +135,7 @@ class FrankaMobile(Robot):
             PhysxSchema.PhysxJointAPI(get_prim_at_path(f"{self.prim_path}/{dof}")).CreateMaxJointVelocityAttr().Set(
                 max_velocity[i]
             )
-            print('Done')
+            # print('Done')
 
     def set_franka_properties(self, stage, prim):
         for link_prim in prim.GetChildren():
