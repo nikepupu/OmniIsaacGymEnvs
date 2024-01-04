@@ -33,13 +33,13 @@ class KinovaMobileView(ArticulationView):
         # )
 
         self._hands = RigidPrimView(
-            prim_paths_expr="/World/envs/.*/kinova/robotiq_85_base_link", name="hands_view", reset_xform_properties=False
+            prim_paths_expr="/World/envs/.*/kinova/end_effector", name="hands_view", reset_xform_properties=False
         )
         self._lfingers = RigidPrimView(
-            prim_paths_expr="/World/envs/.*/kinova/left_inner_finger", name="lfingers_view", reset_xform_properties=False
+            prim_paths_expr="/World/envs/.*/kinova/left_inner_finger_pad", name="lfingers_view", reset_xform_properties=False
         )
         self._rfingers = RigidPrimView(
-            prim_paths_expr="/World/envs/.*/kinova/right_inner_finger",
+            prim_paths_expr="/World/envs/.*/kinova/right_inner_finger_pad",
             name="rfingers_view",
             reset_xform_properties=False,
         )

@@ -195,7 +195,7 @@ class KinovaMobileDrawerTask(RLTask):
         self.init_data()
 
     def get_kinova(self):
-        kinova = KinovaMobile(prim_path=self.default_zero_env_path + "/kinova", name="kinova", translation=[-1.5, 0, 0.01])
+        kinova = KinovaMobile(prim_path=self.default_zero_env_path + "/kinova", name="kinova", translation=[-1.5, 0, 0.00])
 
         # stage = get_current_stage()
         # prim = stage.GetPrimAtPath(self.default_zero_env_path + "/kinova")
@@ -213,9 +213,9 @@ class KinovaMobileDrawerTask(RLTask):
         #             prim,
         #             _physicsMaterialPath,
         #         )
-        self._sim_config.apply_articulation_settings(
-            "kinova", get_prim_at_path(kinova.prim_path), self._sim_config.parse_actor_config("kinova")
-        )
+        # self._sim_config.apply_articulation_settings(
+        #     "kinova", get_prim_at_path(kinova.prim_path), self._sim_config.parse_actor_config("kinova")
+        # )
 
     def get_cabinet(self):
         # cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 

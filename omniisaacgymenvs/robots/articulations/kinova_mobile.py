@@ -37,7 +37,7 @@ class KinovaMobile(Robot):
         self._position = torch.tensor([1.0, 0.0, 0.0]) if translation is None else translation
         self._orientation = torch.tensor([1.0, 0.0, 0.0, 0.0]) if orientation is None else orientation
 
-        self._usd_path = "/home/nikepupu/Desktop/mec_kinova_with_base_flatten_instanceable.usd"
+        self._usd_path = "/home/nikepupu/Desktop/mec_kinova_gripper.usd"
 
         add_reference_to_stage(self._usd_path, prim_path)
 
@@ -55,63 +55,29 @@ class KinovaMobile(Robot):
             "virtual_base_y/base_theta_base_y",
             "virtual_base_theta/base_link_base_theta",
             #arm
-            "base_link/Actuator1",
-            "shoulder_link/Actuator2",
-            "half_arm_1_link/Actuator3",
-            "half_arm_2_link/Actuator4",
-            "forearm_link/Actuator5",
-            "spherical_wrist_1_link/Actuator6",
-            "spherical_wrist_2_link/Actuator7",
+            "base_link/joint_1",
+            "shoulder_link/joint_2",
+            "half_arm_1_link/joint_3",
+            "half_arm_2_link/joint_4",
+            "forearm_link/joint_5",
+            "spherical_wrist_1_link/joint_6",
+            "spherical_wrist_2_link/joint_7",
 
             #hand
-            "robotiq_85_base_link/finger_joint",
-            "robotiq_85_base_link/left_inner_knuckle_joint",
-            "robotiq_85_base_link/right_inner_knuckle_joint",
-            "left_inner_knuckle/left_inner_finger_joint",
-            "robotiq_85_base_link/right_outer_knuckle_joint",
-            "right_inner_knuckle/right_inner_finger_joint"
+            "left_outer_finger/end_hand_prismatic_joint_left",
+            "right_outer_finger/end_hand_prismatic_joint_right",
 
         ]
 
-        #  actuator_groups={
-        #  "base": ActuatorGroupCfg(
-        #     dof_names=["base_y_base_x", "base_theta_base_y", "base_link_base_theta"],
-        #     model_cfg=ImplicitActuatorCfg(velocity_limit=500.0, torque_limit=1000.0),
-        #     control_cfg=ActuatorControlCfg(command_types=["v_abs"], stiffness={".*": 0.0}, damping={".*": 1e5}),
-        # ),
 
-        # "shoulder": ActuatorGroupCfg(
-        #     dof_names=["Actuator[1-4]"],
-        #     model_cfg=ImplicitActuatorCfg(velocity_limit=500.0, torque_limit=1000.0),
-        #     control_cfg=ActuatorControlCfg(
-        #         command_types=["p_abs"],
-        #         stiffness={".*": 800.0},
-        #         damping={".*": 40.0},
-        #         dof_pos_offset={
-        #             "Actuator1": 0.0,
-        #             "Actuator2": 0.0,
-        #             "Actuator3": 0.0,
-        #             "Actuator4": 0.0,
-        #         },
-        #     ),
-        # ),
-        # "forearm": ActuatorGroupCfg(
-        #     dof_names=["Actuator[5-7]"],
-        #     model_cfg=ImplicitActuatorCfg(velocity_limit=500.0, torque_limit=1000.0),
-        #     control_cfg=ActuatorControlCfg(
-        #         command_types=["p_abs"],
-        #         stiffness={".*": 800.0},
-        #         damping={".*": 40.0},
-        #         dof_pos_offset={"Actuator5": 0.0, "Actuator6": 0, "Actuator7": 0},
-        #     ),
-        # ),
-
-        drive_type = ["linear"] * 2 + ["angular"] * 14  
-        default_dof_pos = [math.degrees(x) for x in [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
-        stiffness = [800] * 3 +  [800] * 13
-        damping = [15000] * 3 + [600] * 7 + [100] * 6 
-        max_force = [1000.0, 1000.0, 1000] + [ 1000 ] * 13 #[100, 100, 87, 87, 87, 87, 12, 12, 12, 200, 200]
-        max_velocity = [200.0, 200.0, 200.0] + [200]*7 + [20]*6
+        drive_type = ['linear'] * 2  + ['angular'] +   ["angular"] * 7 + ["linear"] * 2
+        default_dof_pos = [math.degrees(x) for x in [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]] + [0.00, 0.00]
+        stiffness = [800]*3 + [400 * np.pi / 180] * 7 + [10000] * 2
+        damping =  [200]*3 + [80 * np.pi / 180] * 7 + [100] * 2
+        max_force = [300, 300, 300, 87, 87, 87, 87, 12, 12, 12, 200, 200]
+        max_force = [x * 2  for x in max_force]
+        max_velocity = [300 ] * 3 +  [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]] + [0.2, 0.2]
+        max_velocity = [x * 2  for x in max_velocity]
 
         for i, dof in enumerate(dof_paths):
             print(f"{self.prim_path}/{dof}")

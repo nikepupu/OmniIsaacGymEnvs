@@ -75,7 +75,7 @@ def import_tasks():
         "ShadowHand": ShadowHandTask,
         "ShadowHandOpenAI_FF": ShadowHandTask,
         "ShadowHandOpenAI_LSTM": ShadowHandTask,
-        # "KinovaMobileDrawer": KinovaMobileDrawerTask,
+        "KinovaMobileDrawer": KinovaMobileDrawerTask,
         "FrankaMobileDrawer": FrankaMobileDrawerTask,
         "FrankaMobileDrawerTaskRecord": FrankaMobileDrawerTaskRecord,
         "TestCamera": TestCamera,
