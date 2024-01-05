@@ -47,6 +47,7 @@ def import_tasks():
     from omniisaacgymenvs.tasks.shadow_hand import ShadowHandTask
     from omniisaacgymenvs.tasks.kinova_mobile_drawer import KinovaMobileDrawerTask
     from omniisaacgymenvs.tasks.franka_mobile_drawer import FrankaMobileDrawerTask
+    from omniisaacgymenvs.tasks.franka_mobile_cabinet import FrankaMobileCabinetTask
     from omniisaacgymenvs.tasks.franka_multi_task import FrankaMobileMultiTask
     from omniisaacgymenvs.tasks.franka_mobile_drawer_record import FrankaMobileDrawerTaskRecord
     from omniisaacgymenvs.tasks.test_camera import TestCamera
@@ -81,6 +82,7 @@ def import_tasks():
         "FrankaMobileDrawer": FrankaMobileDrawerTask,
         "FrankaMobileMultiTask": FrankaMobileMultiTask,
         "FrankaMobileDrawerTaskRecord": FrankaMobileDrawerTaskRecord,
+        "FrankaMobileCabinet": FrankaMobileCabinetTask,
         "TestCamera": TestCamera,
     }
 
