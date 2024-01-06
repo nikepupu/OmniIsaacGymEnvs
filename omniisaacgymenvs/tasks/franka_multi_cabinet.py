@@ -1213,6 +1213,7 @@ class FrankaMobileMultiCabinet(RLMultiTask):
 
 
         normalized_dof_pos = (self.cabinet_dof_pos - self.cabinet_dof_lower_limits) / (self.cabinet_dof_upper_limits - self.cabinet_dof_lower_limits)
+        
         condition_mask = (normalized_dof_pos >= 0.95) & grasp_success
 
         # if torch.any(normalized_dof_pos > 0.65):

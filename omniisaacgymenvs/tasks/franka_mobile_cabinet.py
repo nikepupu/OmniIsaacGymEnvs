@@ -47,15 +47,17 @@ from omni.isaac.core.utils.torch.rotations import (
 from typing import List, Type
 # from pytorch3d.transforms import quaternion_to_matrix
 from omni.physx.scripts import deformableUtils, physicsUtils
-# def quat_axis(q, axis=0):
-#     '''
-#     :func apply rotation represented by quanternion `q`
-#     on basis vector(along axis)
-#     :return vector after rotation
-#     '''
-#     basis_vec = torch.zeros(q.shape[0], 3, device=q.device)
-#     basis_vec[:, axis] = 1
-#     return quat_rotate(q, basis_vec)
+
+import logging
+
+# Configure logging
+# logging.basicConfig(
+#     filename='/home/nikepupu/Desktop/OmniIsaacGymEnvs/omniisaacgymenvs/reward_calculation.log',  # Name of the log file
+#     filemode='a',  # Append mode, so logs are added and not overwritten
+#     format='%(asctime)s - %(levelname)s - %(message)s',  # Include timestamp
+#     level=logging.INFO  # Logging level
+# )
+
 
 def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
     """
@@ -458,6 +460,7 @@ class FrankaMobileCabinetTask(RLTask):
         normalized_dof_pos = (self.cabinet_dof_pos[:,0] - self.cabinet_dof_lower_limits) / (self.cabinet_dof_upper_limits - self.cabinet_dof_lower_limits)
         # normalized_dof_pos *= 10
         
+        
         self.obs_buf = torch.cat(
             (
                 dof_pos_scaled,  # 12
@@ -555,6 +558,8 @@ class FrankaMobileCabinetTask(RLTask):
         # bookkeeping
         self.reset_buf[env_ids] = 0
         self.progress_buf[env_ids] = 0
+
+        # logging.info("Reset \n")
 
     def post_reset(self):
 
@@ -661,20 +666,12 @@ class FrankaMobileCabinetTask(RLTask):
         return rotated_points
 
     def calculate_metrics(self) -> None:
-        # import pdb; pdb.set_trace()
         self.cabinet_dof_pos = self._cabinets.get_joint_positions(clone=False)
-        # self.centers = (self.centers_orig +  self.forwardDir * self.cabinet_dof_pos[:, 1].unsqueeze(-1)).to(torch.float32).to(self._device)
         corners = self.corners.clone()
-        # for idx in range(self._num_envs):
         
         corners = self.rotate_points_around_z(corners, self.cabinet_dof_pos[:, 0], (self.rotation_axis + self._env_pos).unsqueeze(1) )
         self.centers = corners.mean(dim=1)
-        # self.centers = self.rotate_points_around_z(self.centers_orig.clone().unsqueeze(1), self.cabinet_dof_pos[:, 0], self.rotation_axis )
-        # self.centers = self.centers.squeeze(1)
-        # centers are the mean of corners
         
-        
-
         handle_out = corners[:, 0] - corners[:, 4]
         handle_long = corners[:, 1] - corners[:, 0]
         handle_short = corners[:, 3] - corners[:, 0]
@@ -683,46 +680,7 @@ class FrankaMobileCabinetTask(RLTask):
         self.handle_short = handle_short.to(self._device)
         self.handle_out = handle_out.to(self._device)
         self.handle_long = handle_long.to(self._device)
-        
-        # for idx in range(self._num_envs):
 
-        #     handle_out = corners[idx][0] - corners[idx][4]
-        #     handle_long = corners[idx][1] - corners[idx][0]
-        #     handle_short = corners[idx][3] - corners[idx][0]
-
-        #     self.handle_short[idx] = handle_short
-        #     self.handle_out[idx] = handle_out
-        #     self.handle_long[idx] = handle_long
-        
-        # self.handle_short = self.handle_short.to(self._device)
-        # self.handle_out = self.handle_out.to(self._device)
-        # self.handle_long = self.handle_long.to(self._device)
-
-        # 
-        
-        # while True:
-        #     color = 4283782485
-        #     my_debugDraw = get_debug_draw_interface()
-        #     corners = self.corners.clone()
-        #     self.cabinet_dof_pos = self._cabinets.get_joint_positions(clone=False)
-        #     corners = self.rotate_points_around_z(corners, self.cabinet_dof_pos[:, 0], (self.rotation_axis + self._env_pos).unsqueeze(1) )
-        #     # print('pre corners: ', corners)     
-        #     self.centers = corners.mean(dim=1)   
-        #     for i, corner in enumerate(corners):
-        #         corner = corner.cpu().numpy()
-        #         my_debugDraw.draw_line(carb.Float3(corner[0]),color, carb.Float3(corner[4]), color)
-        #         my_debugDraw.draw_line(carb.Float3(corner[1]),color, carb.Float3(corner[0]), color)
-        #         my_debugDraw.draw_line(carb.Float3(corner[3]),color, carb.Float3(corner[0]), color)
-        #         my_debugDraw.draw_line(carb.Float3(corner[0]),color, carb.Float3(self.centers[i].cpu().numpy() ), color)
-
-        #     world = World()
-        #     world.step(render=True)
-        # handle_out = corners[0] - corners[4]
-        # handle_long = corners[1] - corners[0]
-        # handle_short = corners[3] - corners[0]
-
-        
-        # print(self.centers)
         hand_pos, hand_rot = self.get_ee_pose()
         
         tcp_to_obj_delta = hand_pos - self.centers
@@ -752,20 +710,6 @@ class FrankaMobileCabinetTask(RLTask):
         is_reached_long = (tcp_to_obj_delta * handle_long).sum(dim=-1).abs() < (handle_long_length / 2.0)
         is_reached_out = (tcp_to_obj_delta * handle_out).sum(dim=-1).abs() < (handle_out_length / 2.0 )
 
-        # print('handle out: ', handle_out)
-        # exit()
-        ############################
-
-        # hand_grip_dir = quat_axis(hand_rot, 1).cuda()
-        # hand_sep_dir =  quat_axis(hand_rot, 0).cuda()
-        # hand_down_dir = quat_axis(hand_rot, 2).cuda()
-        # dot1 = torch.max((hand_grip_dir * handle_out).sum(dim=-1), (-hand_grip_dir * handle_out).sum(dim=-1))
-        # dot2 = torch.max((hand_sep_dir * handle_short).sum(dim=-1), (-hand_sep_dir * handle_short).sum(dim=-1)) 
-        # dot2 = (-hand_sep_dir * handle_short).sum(dim=-1)
-        # dot3 = torch.max((hand_down_dir * handle_long).sum(dim=-1), (-hand_down_dir * handle_long).sum(dim=-1))
-
-        ############################
-
         hand_grip_dir = quat_axis(hand_rot, 2).to(self._device)
         hand_sep_dir = quat_axis(hand_rot, 1). to(self._device)
         hand_down_dir = quat_axis(hand_rot, 0).to(self._device)
@@ -782,94 +726,86 @@ class FrankaMobileCabinetTask(RLTask):
 
         is_reached =  is_reached_out & is_reached_long & is_reached_short #& (tcp_to_obj_dist < 0.03) 
 
-        # if torch.any(is_reached_out):
-        #     print('is reached out')
-        
-        # if torch.any(is_reached_long):
-        #     print('is reached long')
-        
-        # if torch.any(is_reached_short):
-        #     print('is reached short')
-
-        # if is_reached.sum() > 10:
-        #     print('is reached: ')
-        #     print(torch.nonzero(is_reached).squeeze())
-        #     print()
-        #     timeline = omni.timeline.get_timeline_interface()
-        #     print()
-        #     from omni.isaac.core import World
-        #     world = World()
-            
-        #     while True:
-        #         world.step(render=True)
-
-        # close_reward = is_reached * (gripper_length < 0.02) * 0.1 + 0.1 * (gripper_length > 0.08) * (~is_reached)
+      
         close_reward =  (0.1 - gripper_length ) * is_reached + 0.1 * ( gripper_length -0.1) * (~is_reached)
         # print('close reward: ', close_reward)
 
-        grasp_success = is_reached & (gripper_length < handle_short_length + 0.015) & (rot_reward > -0.5)
-
-        # if torch.any(grasp_success):
-        #     if grasp_success.sum() > 0.5 * self._num_envs:
-        #         print('grasp half success')
-        #     num_true = grasp_success.sum()
-        #     if num_true >= 10:
-
-        #         print(torch.nonzero(grasp_success).squeeze())
-        #         print('grasp 10 success')
-        #         print()
-        #         timeline = omni.timeline.get_timeline_interface()
-        #         timeline.pause()
-        #         from omni.isaac.core import World
-        #         world = World()
-        #         while True:
-        #             world.step(render=True)
-
+        grasp_success = is_reached & (gripper_length < handle_short_length + 0.02) & (rot_reward > -0.4)
+        
 
         normalized_dof_pos = (self.cabinet_dof_pos[:, 0] - self.cabinet_dof_lower_limits) / (self.cabinet_dof_upper_limits - self.cabinet_dof_lower_limits)
         condition_mask = (normalized_dof_pos >= 0.95) & grasp_success
 
-        # if torch.any(normalized_dof_pos > 0.65):
-        #     print('open 65%')
-        # print(normalized_dof_pos)
+        print(normalized_dof_pos)
+        print(self.cabinet_dof_lower_limits)
+        print(self.cabinet_dof_upper_limits)
+        print(self.cabinet_dof_pos[:, 0])
+        print('=======')
 
-        self.rew_buf[:] = reaching_reward +  rot_reward * 0.5 + 5 * close_reward + grasp_success * 10 * ( 0.1 + normalized_dof_pos)  
+        openness_reward = 10 * (normalized_dof_pos ** 2)
 
-        # self.rew_buf = self.rew_buf + self.rew_buf.abs() * rot_reward
+        condition_1 = normalized_dof_pos <= 0.5
+        condition_2 =  normalized_dof_pos > 0.5
+        self.rew_buf[:] = reaching_reward +  rot_reward * 0.5 + 5 * close_reward + grasp_success * 10 * ( 0.05 + openness_reward)  
 
-        # self.rew_buf[condition_mask] += 10.0
-        # self.rew_buf[:] = rot_reward
-        # self.rew_buf[:] = rot_reward
+ 
         self.rew_buf[:] = self.rew_buf[:].to(torch.float32)
-        # print()
-        # print('reward: ', self.rew_buf )
-        # self.rew_buf[:] = self.compute_franka_reward(
-        #     self.reset_buf,
-        #     self.progress_buf,
-        #     self.actions,
-        #     self.cabinet_dof_pos,
-        #     self.franka_grasp_pos,
-        #     self.drawer_grasp_pos,
-        #     self.franka_grasp_rot,
-        #     self.drawer_grasp_rot,
-        #     self.franka_lfinger_pos,
-        #     self.franka_rfinger_pos,
-        #     self.gripper_forward_axis,
-        #     self.drawer_inward_axis,
-        #     self.gripper_up_axis,
-        #     self.drawer_up_axis,
-        #     self._num_envs,
-        #     self.dist_reward_scale,
-        #     self.rot_reward_scale,
-        #     self.around_handle_reward_scale,
-        #     self.open_reward_scale,
-        #     self.finger_dist_reward_scale,
-        #     self.action_penalty_scale,
-        #     self.distX_offset,
-        #     self._max_episode_length,
-        #     self.franka_dof_pos,
-        #     self.finger_close_reward_scale,
-        # )
+
+        # logging.info(f"Cabinet DOF Position: {self.cabinet_dof_pos}")
+        # logging.info(f"TCP to Object Distance: {tcp_to_obj_dist}")
+        # logging.info(f"Handle Out Length: {handle_out_length}")
+        # logging.info(f"Handle Long Length: {handle_long_length}")
+        # logging.info(f"Handle Short Length: {handle_short_length}")
+
+        # # Log the grip and reach status
+        # logging.info(f"Is Reached Short: {is_reached_short}")
+        # logging.info(f"Is Reached Long: {is_reached_long}")
+        # logging.info(f"Is Reached Out: {is_reached_out}")
+
+        # # Log the orientation and alignment with handles
+        # logging.info(f"Dot product 1 (Grip Direction with Handle Out): {dot1}")
+        # logging.info(f"Dot product 2 (Separation Direction with Handle Short): {dot2}")
+        # logging.info(f"Dot product 3 (Down Direction with Handle Long): {dot3}")
+
+        # # Log the individual reward components
+        # logging.info(f"Rotational Reward: {rot_reward}")
+        # logging.info(f"Reaching Reward: {reaching_reward}")
+        # logging.info(f"Close Reward: {close_reward}")
+        # logging.info(f"Grasp Success: {grasp_success}")
+        # logging.info(f"Normalized DOF Position: {normalized_dof_pos}")
+
+        # # Log the overall reward
+        # logging.info(f"Total Reward: {self.rew_buf[:]}")
+        # print('logging done')
+        # with open('reward_calculation.txt', 'a') as f:  # Append mode
+        
+        #     # Print details about positions and distances
+        #     print(f"Cabinet DOF Position: {self.cabinet_dof_pos}", file=f)
+        #     print(f"TCP to Object Distance: {tcp_to_obj_dist}", file=f)
+        #     print(f"Handle Out Length: {handle_out_length}", file=f)
+        #     print(f"Handle Long Length: {handle_long_length}", file=f)
+        #     print(f"Handle Short Length: {handle_short_length}", file=f)
+
+        #     # Print the grip and reach status
+        #     print(f"Is Reached Short: {is_reached_short}", file=f)
+        #     print(f"Is Reached Long: {is_reached_long}", file=f)
+        #     print(f"Is Reached Out: {is_reached_out}", file=f)
+
+        #     # Print the orientation and alignment with handles
+        #     print(f"Dot product 1 (Grip Direction with Handle Out): {dot1}", file=f)
+        #     print(f"Dot product 2 (Separation Direction with Handle Short): {dot2}", file=f)
+        #     print(f"Dot product 3 (Down Direction with Handle Long): {dot3}", file=f)
+
+        #     # Print the individual reward components
+        #     print(f"Rotational Reward: {rot_reward}", file=f)
+        #     print(f"Reaching Reward: {reaching_reward}", file=f)
+        #     print(f"Close Reward: {close_reward}", file=f)
+        #     print(f"Grasp Success: {grasp_success}", file=f)
+        #     print(f"Normalized DOF Position: {normalized_dof_pos}", file=f)
+
+        #     # Print the overall reward
+        #     print(f"Total Reward: {self.rew_buf[:].tolist()}", file=f)
+       
 
     def is_done(self) -> None:
         # reset if drawer is open or max length reached
