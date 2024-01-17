@@ -220,7 +220,7 @@ class FrankaMobileCabinetTask(RLTask):
         self.init_data()
 
     def get_franka(self):
-        franka = FrankaMobile(prim_path=self.default_zero_env_path + "/franka", name="franka", translation=[-1.80, 0.20, 0.02])
+        franka = FrankaMobile(prim_path=self.default_zero_env_path + "/franka", name="franka", translation=[-1.50, 0.20, 0.02])
 
        
 
@@ -231,7 +231,7 @@ class FrankaMobileCabinetTask(RLTask):
         # cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 
         #                   usd_path="/home/nikepupu/Desktop/Orbit/usd/40147/mobility_relabel_gapartnet_instanceable.usd", 
         #                   translation=[0,0,0.0], orientation=[0,0,0,1])
-        self.cabinet_scale = 0.5
+        self.cabinet_scale = 0.8
         cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 
                           usd_path="/home/nikepupu/Desktop/Orbit/NewUSD/40147/mobility_relabel_gapartnet.usd", 
                           translation=[0,0,0.0], orientation=[1,0,0,0], scale=[self.cabinet_scale, self.cabinet_scale, self.cabinet_scale])
@@ -730,23 +730,23 @@ class FrankaMobileCabinetTask(RLTask):
         close_reward =  (0.1 - gripper_length ) * is_reached + 0.1 * ( gripper_length -0.1) * (~is_reached)
         # print('close reward: ', close_reward)
 
-        grasp_success = is_reached & (gripper_length < handle_short_length + 0.02) & (rot_reward > -0.4)
+        grasp_success = is_reached & (gripper_length < handle_short_length + 0.02) & (rot_reward > -0.2)
         
 
         normalized_dof_pos = (self.cabinet_dof_pos[:, 0] - self.cabinet_dof_lower_limits) / (self.cabinet_dof_upper_limits - self.cabinet_dof_lower_limits)
         condition_mask = (normalized_dof_pos >= 0.95) & grasp_success
 
-        print(normalized_dof_pos)
-        print(self.cabinet_dof_lower_limits)
-        print(self.cabinet_dof_upper_limits)
-        print(self.cabinet_dof_pos[:, 0])
-        print('=======')
+        # print(normalized_dof_pos)
+        # print(self.cabinet_dof_lower_limits)
+        # print(self.cabinet_dof_upper_limits)
+        # print(self.cabinet_dof_pos[:, 0])
+        # print('=======')
 
-        openness_reward = 10 * (normalized_dof_pos ** 2)
+        # openness_reward = 10 * (normalized_dof_pos ** 2)
 
         condition_1 = normalized_dof_pos <= 0.5
         condition_2 =  normalized_dof_pos > 0.5
-        self.rew_buf[:] = reaching_reward +  rot_reward * 0.5 + 5 * close_reward + grasp_success * 10 * ( 0.05 + openness_reward)  
+        self.rew_buf[:] = reaching_reward +  rot_reward * 0.5 + 5 * close_reward + grasp_success * 10 * ( 0.05 + normalized_dof_pos)  
 
  
         self.rew_buf[:] = self.rew_buf[:].to(torch.float32)

@@ -274,47 +274,84 @@ class FrankaMobileYCBTask(RLTask):
 
     def get_ee_pose(self):
         hand_position_w, hand_quat_w = self._frankas._hands.get_world_poses(clone=True)
-
-        hand_position_w = hand_position_w - self._env_pos
-
-        # rotation_matrix = quaternion_to_matrix( torch.tensor(self.cabinet_orientation).float() ).to(self._device)
-        # hand_position_w =  torch.matmul(rotation_matrix.T, hand_position_w.T).T
        
-        # print('hand_position_w: ', hand_position_w)
-        # exit()
-        ee_pos_offset = torch.tensor([0.0, 0.0, 0.105]).repeat((self._num_envs, 1)).to(hand_position_w.device)
-        ee_rot_offset = torch.tensor([1.0, 0.0, 0.0, 0.0]).repeat((self._num_envs, 1)).to(hand_quat_w.device)
-        # print(ee_pos_offset.shape)
-        # print(ee_rot_offset.shape)
-        position_w, quat_w = combine_frame_transforms(
-            hand_position_w, hand_quat_w,  ee_pos_offset, ee_rot_offset
-        )
-        return position_w, quat_w
+        return hand_position_w, hand_quat_w
+    
+    def check_grasp(self):
+        def extract_envid(identifier):
+            # extract the number follow env:
+            return int(identifier.split('env_')[1].split('/')[0])
+
+
+        contact_headers, contact_data = get_physx_simulation_interface().get_contact_report()
+        l = False
+        r = False
+        for contact_header in contact_headers:
+            collider0 = str(PhysicsSchemaTools.intToSdfPath(contact_header.collider0))
+            collider1 = str(PhysicsSchemaTools.intToSdfPath(contact_header.collider1))
+
+            env_id1 = -1
+            env_id2 = -1
+            if 'franka' in collider0 or 'ycb' in collider0:
+                env_id1 = extract_envid(collider0) 
+            if 'franka' in collider1 and 'ycb' in collider1:
+                env_id2 = extract_envid(collider1)
+
+            if env_id1 == env_id2 and env_id1 != -1:
+                env_id = env_id1
+            else:
+                continue
+
+            if ( (f'/World/envs/env_{env_id}/franka/panda_rightfinger' in collider0 )  and ( f'/World/envs/env_{env_id}/ycb' in collider1 ) ) or \
+                ( (f'/World/envs/env_{env_id}/franka/panda_rightfinger' in collider1 ) and (f'/World/envs/env_{env_id}/ycb' in collider0) ):
+                r = True
+
+            if ( (f'/World/envs/env_{env_id}/franka/panda_leftfinger' in collider0 )  and ( f'/World/envs/env_{env_id}/ycb' in collider1 ) ) or \
+                ( (f'/World/envs/env_{env_id}/franka/panda_leftfinger' in collider1 ) and (f'/World/envs/env_{env_id}/ycb' in collider0) ):
+                l = True
+            print('contact part: ')
+            print(collider0)
+            print(collider1)
+
+         
+            
+        if l :
+            print('left finger in contact')
+        
+        if r :
+            print('right finger in contact')
+            
+        
+            
+            
+
+        # for contact_header in contact_headers:
+        #     print("Got contact header type: " + str(contact_header.type))
+        #     print("Actor0: " + str(PhysicsSchemaTools.intToSdfPath(contact_header.actor0)))
+        #     print("Actor1: " + str(PhysicsSchemaTools.intToSdfPath(contact_header.actor1)))
+        #     print("Collider0: " + str(PhysicsSchemaTools.intToSdfPath(contact_header.collider0)))
+        #     print("Collider1: " + str(PhysicsSchemaTools.intToSdfPath(contact_header.collider1)))
+        #     print("StageId: " + str(contact_header.stage_id))
+        #     print("Number of contacts: " + str(contact_header.num_contact_data))
+            
+        #     contact_data_offset = contact_header.contact_data_offset
+        #     num_contact_data = contact_header.num_contact_data
+            
+        #     for index in range(contact_data_offset, contact_data_offset + num_contact_data, 1):
+        #         print("Contact: ", index - contact_data_offset)
+        #         print("Contact position: " + str(contact_data[index].position))
+        #         print("Contact normal: " + str(contact_data[index].normal))
+        #         print("Contact impulse: " + str(contact_data[index].impulse))
+        #         print("Contact separation: " + str(contact_data[index].separation))
+        #         print("Contact faceIndex0: " + str(contact_data[index].face_index0))
+        #         print("Contact faceIndex1: " + str(contact_data[index].face_index1))
+        #         print("Contact material0: " + str(PhysicsSchemaTools.intToSdfPath(contact_data[index].material0)))
+        #         print("Contact material1: " + str(PhysicsSchemaTools.intToSdfPath(contact_data[index].material1)))
+
+
 
     def get_observations(self) -> dict:
-        contact_headers, contact_data = get_physx_simulation_interface().get_contact_report()
-        for contact_header in contact_headers:
-            print("Got contact header type: " + str(contact_header.type))
-            print("Actor0: " + str(PhysicsSchemaTools.intToSdfPath(contact_header.actor0)))
-            print("Actor1: " + str(PhysicsSchemaTools.intToSdfPath(contact_header.actor1)))
-            print("Collider0: " + str(PhysicsSchemaTools.intToSdfPath(contact_header.collider0)))
-            print("Collider1: " + str(PhysicsSchemaTools.intToSdfPath(contact_header.collider1)))
-            print("StageId: " + str(contact_header.stage_id))
-            print("Number of contacts: " + str(contact_header.num_contact_data))
-            
-            contact_data_offset = contact_header.contact_data_offset
-            num_contact_data = contact_header.num_contact_data
-            
-            for index in range(contact_data_offset, contact_data_offset + num_contact_data, 1):
-                print("Contact:")
-                print("Contact position: " + str(contact_data[index].position))
-                print("Contact normal: " + str(contact_data[index].normal))
-                print("Contact impulse: " + str(contact_data[index].impulse))
-                print("Contact separation: " + str(contact_data[index].separation))
-                print("Contact faceIndex0: " + str(contact_data[index].face_index0))
-                print("Contact faceIndex1: " + str(contact_data[index].face_index1))
-                print("Contact material0: " + str(PhysicsSchemaTools.intToSdfPath(contact_data[index].material0)))
-                print("Contact material1: " + str(PhysicsSchemaTools.intToSdfPath(contact_data[index].material1)))
+        
 
         # drawer_pos, drawer_rot = self._cabinets._drawers.get_world_poses(clone=False)
         franka_dof_pos = self._frankas.get_joint_positions(clone=False)
@@ -354,6 +391,7 @@ class FrankaMobileYCBTask(RLTask):
         # print('obs: ',  self.obs_buf[0,:])
         # exit()
         observations = {self._frankas.name: {"obs_buf": self.obs_buf.to(torch.float32)}}
+        self.check_grasp()
         # observations = {self._frankas.name: {"obs_buf": torch.zeros((self._num_envs, self._num_observations))}}
         # print('obs: ', observations)
         return observations
@@ -477,12 +515,16 @@ class FrankaMobileYCBTask(RLTask):
 
     def calculate_metrics(self) -> None:
         self.rew_buf[:] = 0.0
-        ycb_pose = self._props.get_world_poses()[0]
-        hand_pose = self.get_ee_pose()[0]
+        ycb_pose = self._props.get_world_poses()[0] - self._env_pos
+        hand_pose = self.get_ee_pose()[0] - self._env_pos
 
         dist_nrom = torch.norm(ycb_pose - hand_pose, dim=-1)
+        # print(dist_nrom)
+        
 
         self.rew_buf += - dist_nrom 
+
+        self.check_grasp()
         self.rew_buf[:] = self.rew_buf[:].to(torch.float32)
         
 
