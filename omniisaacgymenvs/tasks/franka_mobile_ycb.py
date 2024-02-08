@@ -336,7 +336,7 @@ class FrankaMobileYCBTask(RLTask):
    
     
         position, orientation = ycb_object.get_world_pose()
-        position[2] += -zmin 
+        position[2] = -zmin 
 
         self.init_pos = position.clone()
         
@@ -859,8 +859,8 @@ class FrankaMobileYCBTask(RLTask):
         # print('====')
 
 
-        self.rew_buf +=   reaching_reward_obj  + rot_reward * 0.5 + 10 * close_reward + grasp_success *  10 *  (0.1 +  (position[:,2]- self.init_pos[2]) * 10 ) 
-
+        self.rew_buf +=   reaching_reward_obj  + rot_reward * 0.5 + 10 * close_reward + grasp_success *  10 *  (0.1 +  10*(position[:,2]- self.init_pos[2]) * 10 ) 
+        # print('diff: ', position[:,2]- self.init_pos[2])
         
       
         self.rew_buf[:] = self.rew_buf[:].to(torch.float32)
