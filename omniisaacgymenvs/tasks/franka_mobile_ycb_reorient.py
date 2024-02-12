@@ -44,7 +44,8 @@ from omni.isaac.core.utils.torch.rotations import (
     quat_mul,
     quat_rotate,
     quat_rotate_inverse,
-    quats_to_rot_matrices
+    quats_to_rot_matrices,
+    quat_diff_rad
 )
 # from pytorch3d.transforms import quaternion_to_matrix
 from omni.physx.scripts import deformableUtils, physicsUtils
@@ -172,14 +173,14 @@ def normalize_vector(x, eps=1e-6):
     norm = np.linalg.norm(x)
     return np.zeros_like(x) if norm < eps else (x / norm)
 
-class FrankaMobileYCBTask(RLTask):
+class FrankaMobileYCBTaskReorient(RLTask):
     def __init__(self, name, sim_config, env, offset=None) -> None:
         self.update_config(sim_config)
 
         self.distX_offset = 0.04
         self.dt = 1 / 60.0
 
-        self._num_observations = 37 #37 + 3 + 7
+        self._num_observations = 37 + 4 #37 + 3 + 7
         self._num_actions = 12   # 10 + 1
 
         self.translations_orig = None
@@ -328,6 +329,7 @@ class FrankaMobileYCBTask(RLTask):
         self.bboxes = torch.tensor(self.bboxes).float()
 
         orientation = [ 0.7071068, 0.7071068, 0, 0,  ]
+        self.target_orientation = torch.tensor([1.0, 0.0, 0.0, 0.0])
         ycb_object = RigidPrim( prim_path = self.default_zero_env_path + "/ycb", orientation = orientation, scale=[0.8, 0.8, 0.8])
         bboxes_adjust = omni.usd.get_context().compute_path_world_bounding_box(prim_path)
         min_box = np.array(bboxes_adjust[0])
@@ -567,7 +569,7 @@ class FrankaMobileYCBTask(RLTask):
                 hand_pos, # 3
                 hand_rot, # 4
                 centers, # 3
-                # rotation, # 4
+                rotation, # 4
                 # goal_position# grasped
             ),
             dim=-1,
@@ -759,22 +761,13 @@ class FrankaMobileYCBTask(RLTask):
         corners = transform_3d_bounding_boxes(self.bboxes, matrix, position.cpu()).numpy()
         
         upper_face_centers = torch.tensor([self.compute_upper_face_center(corners[i]) for i in range(corners.shape[0])]).to(self._device)
-        # add 3 centimeter  to the z axis
 
-        upper_face_centers = upper_face_centers + torch.tensor([0, 0, 0.02], device=self._device)
-        upper_face_centers_exact = upper_face_centers + torch.tensor([0, 0, -0.035], device=self._device)
+        # upper_face_centers = upper_face_centers + torch.tensor([0, 0, 0.02], device=self._device)
+        upper_face_centers_exact = upper_face_centers + torch.tensor([0, 0, -0.015], device=self._device)
 
         # tcp_to_obj_dist = torch.norm(upper_face_centers - hand_pos, dim=-1)
         delta = upper_face_centers_exact - hand_pos
         tcp_to_obj_dist_obj = torch.norm(upper_face_centers_exact - hand_pos, dim=-1)
-
-        # reaching_reward = 1 - torch.tanh( 3.0 * tcp_to_obj_dist) 
-
-        
-
-
-        
-
         
 
         handle_out_length = torch.norm(self.handle_out, dim = -1).to(torch.float32).to(self._device)
@@ -788,13 +781,6 @@ class FrankaMobileYCBTask(RLTask):
 
         self.franka_lfinger_pos = self._frankas._lfingers.get_world_poses(clone=False)[0] 
         self.franka_rfinger_pos = self._frankas._rfingers.get_world_poses(clone=False)[0] 
-        
-
-        
-      
-
-        # print(self.franka_lfinger_pos)
-        # print(self.franka_rfinger_pos)
      
        
         short_ltip = ((self.franka_lfinger_pos - upper_face_centers_exact) * handle_long).sum(dim=-1) 
@@ -829,39 +815,31 @@ class FrankaMobileYCBTask(RLTask):
 
         rot_reward = dot1 + dot2 + dot3 - 3     
 
-        # is_reached_pregrasped = (tcp_to_obj_dist < 0.03).to(self._device) & (rot_reward > -0.2).to(self._device)
 
         # is_reached_grasp = (tcp_to_obj_dist_obj < 0.02).to(self._device) & (rot_reward > -0.2).to(self._device)
 
-        grasp_success = is_reached &  (tcp_to_obj_dist_obj < 0.025) & (gripper_length < handle_long_length + 0.01) & (rot_reward > -0.2)
+        grasp_success = is_reached &  (tcp_to_obj_dist_obj < 0.03) & (gripper_length < handle_long_length + 0.01) & (rot_reward > -0.2)
 
         close_reward =   ( gripper_length -0.1) * (tcp_to_obj_dist_obj >= 0.01) * 0.1 + (0.1 - gripper_length ) * (tcp_to_obj_dist_obj < 0.02)
+
+        num_envs = orientation.shape[0]
         
-        # if torch.nonzero(grasp_success).shape[0] > 5:
-        #     world = World()
-        #     index = torch.nonzero(grasp_success)
-        #     print('grasp success index: ', index)
-            
-        #     while True:
-        #         world.render()
-            
-        # print any reach short, long, out
-        # if torch.nonzero(is_reached_short).shape[0] == 0:
-        #     print('did not reach short')
-        
-        # if torch.nonzero(is_reached_long).shape[0] == 0:
-        #     print('did not reach long')
-        #     # print(short_ltip)
-        #     # print(short_rtip)
-        
-        # if torch.nonzero(is_reached_out).shape[0] == 0:
-        #     print('did not reach out')
-        # print('====')
+        target_orientation = self.target_orientation.repeat(num_envs, 1)
+       
+        object_rotation_diff = quat_diff_rad(orientation.to(self._device), target_orientation.to(self._device))
+
+        rot_diff_reward = 1 - torch.tanh( 3.0 * object_rotation_diff)
+
+        height_reward = torch.clamp(position[:,2]- self.init_pos[2], max=0.5) * 10
 
 
-        self.rew_buf +=   reaching_reward_obj  + rot_reward * 0.5 + 10 * close_reward + grasp_success *  10 *  (0.1 +  10*(position[:,2]- self.init_pos[2]) * 10 ) 
-        # print('diff: ', position[:,2]- self.init_pos[2])
+        self.rew_buf +=   reaching_reward_obj  + 5 * close_reward + grasp_success *  10 *  (0.1 +  height_reward ) 
         
+        # add rotation diff reward only if the object is higher than 0.2 m
+        self.rew_buf +=  grasp_success * (position[:,2] >= 0.2).to(torch.float32) * rot_diff_reward * 100
+
+        # add rot_reward only if the object height is smaller than 0.2 m
+        self.rew_buf +=  (position[:,2] < 0.2).to(torch.float32) * rot_reward * 0.5
       
         self.rew_buf[:] = self.rew_buf[:].to(torch.float32)
         
