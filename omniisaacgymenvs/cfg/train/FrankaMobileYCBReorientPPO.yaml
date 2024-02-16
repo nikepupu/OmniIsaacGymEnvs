@@ -29,6 +29,14 @@ params:
         name: default
       regularizer:
         name: None
+    
+    # rnn:
+    #     name: lstm
+    #     units: 1024
+    #     layers: 1
+    #     before_mlp: True
+    #     layer_norm: True
+    #     zero_rnn_on_done: False
 
   load_checkpoint: ${if:${...checkpoint},True,False} # flag which sets whether to load the checkpoint
   load_path: ${...checkpoint} # path to the checkpoint to load
@@ -50,7 +58,7 @@ params:
     normalize_advantage: True
     gamma: 0.99
     tau: 0.95
-    learning_rate: 3e-4
+    learning_rate: 5e-4
     lr_schedule: adaptive
     kl_threshold: 0.008
     score_to_win: 100000000
@@ -63,7 +71,7 @@ params:
     truncate_grads: True
     e_clip: 0.2
     horizon_length: 16
-    minibatch_size: 8192
+    minibatch_size: 4096
     mini_epochs: 8
     critic_coef: 4
     clip_value: True

@@ -183,6 +183,7 @@ class FrankaMobileYCBTask(RLTask):
         self._num_actions = 12   # 10 + 1
 
         self.translations_orig = None
+        self.epi = 0
         
 
         RLTask.__init__(self, name, env)
@@ -429,11 +430,13 @@ class FrankaMobileYCBTask(RLTask):
                 for index in range(contact_data_offset, contact_data_offset + num_contact_data, 1):
                     impulse = contact_data[index].impulse
                     limpulse = torch.tensor(np.array(impulse)).cpu()
+                    # print('limpulse: ', env_id, limpulse)
                     break
                 ldirection = quaternion_to_matrix(self._frankas._lfingers.get_world_poses()[1])[env_id][:3,1].cpu().numpy()
 
                 if limpulse is not None:
                     l_angle = np.rad2deg(compute_angle_between(ldirection, limpulse.numpy()))
+                    # print('l_angle: ', env_id, l_angle)
                     langles[env_id] = l_angle
                     limpulses[env_id] = limpulse
                 
@@ -445,6 +448,7 @@ class FrankaMobileYCBTask(RLTask):
                 for index in range(contact_data_offset, contact_data_offset + num_contact_data, 1):
                     impulse = contact_data[index].impulse
                     rimpulse = torch.tensor(np.array(impulse)).cpu()
+                    # print('rimpulse: ', env_id, rimpulse)
                     break
 
                 
@@ -452,21 +456,29 @@ class FrankaMobileYCBTask(RLTask):
                 
                 if rimpulse is not None:
                     r_angle =  np.rad2deg(compute_angle_between(rdirection, rimpulse.numpy()))
+                    # print('r_angle: ', env_id,  r_angle)
                     rangles[env_id] = r_angle
                     rimpulses[env_id] = rimpulse
-     
-        grasped =   (rangles < max_angle) & (langles < max_angle) & (rimpulses.norm(dim=1) > 0.01) & (limpulses.norm(dim=1) > 0.01)
-        if torch.nonzero(grasped).shape[0] > 3:
-            world = World()
-            index = torch.nonzero(grasped)
-            print('index: ', index)
-            print('grasped: ', grasped[index])
-            print('rangles: ', rangles[index])
-            print('langles: ', langles[index])
-            print('rimpulses: ', rimpulses[index])
-            print('limpulses: ', limpulses[index])
-            while True:
-                world.render()
+        
+        print('rangles: ', rangles)
+        print('langles: ', langles)
+        print('rimpulses: ', rimpulses)
+        print('limpulses: ', limpulses)
+        # grasped =   (rangles < max_angle) & (langles < max_angle) & (rimpulses.norm(dim=1) > 0.01) & (limpulses.norm(dim=1) > 0.01)
+
+        grasped =  ((rangles < max_angle) & (rimpulses.norm(dim=1) > 0.01)) | ((langles < max_angle) & (limpulses.norm(dim=1) > 0.01))
+        print('grasped: ', grasped)
+        # if torch.nonzero(grasped).shape[0] > 3:
+        #     world = World()
+        #     index = torch.nonzero(grasped)
+        #     print('index: ', index)
+        #     print('grasped: ', grasped[index])
+        #     print('rangles: ', rangles[index])
+        #     print('langles: ', langles[index])
+        #     print('rimpulses: ', rimpulses[index])
+        #     print('limpulses: ', limpulses[index])
+        #     while True:
+        #         world.render()
         # print(rimpulses.norm(dim=1))
         # print(rimpulses.norm(dim=1).shape)
         # exit()
@@ -558,6 +570,7 @@ class FrankaMobileYCBTask(RLTask):
         # print('tool_pos_diff: ', tool_pos_diff)
         # exit()
         # grasped = self.check_grasp(30).unsqueeze(-1)
+        # print('grasped: ', grasped)
         # print('grasped: ', torch.nonzero(grasped))
         self.obs_buf = torch.cat(
             (
@@ -677,6 +690,12 @@ class FrankaMobileYCBTask(RLTask):
         return torch.tensor(direction_vectors)
 
     def reset_idx(self, env_ids):
+        # world = World()
+        # if self.epi > 1:
+        #     while True:
+        #         world.render()
+        # self.epi += 1
+
         indices = env_ids.to(dtype=torch.int32)
         num_indices = len(indices)
 
@@ -704,6 +723,8 @@ class FrankaMobileYCBTask(RLTask):
         # bookkeeping
         self.reset_buf[env_ids] = 0
         self.progress_buf[env_ids] = 0
+
+        
 
     def post_reset(self):
 
@@ -764,7 +785,7 @@ class FrankaMobileYCBTask(RLTask):
         upper_face_centers = upper_face_centers + torch.tensor([0, 0, 0.02], device=self._device)
         upper_face_centers_exact = upper_face_centers + torch.tensor([0, 0, -0.035], device=self._device)
 
-        # tcp_to_obj_dist = torch.norm(upper_face_centers - hand_pos, dim=-1)
+        tcp_to_obj_dist = torch.norm(upper_face_centers - hand_pos, dim=-1)
         delta = upper_face_centers_exact - hand_pos
         tcp_to_obj_dist_obj = torch.norm(upper_face_centers_exact - hand_pos, dim=-1)
 
@@ -789,9 +810,6 @@ class FrankaMobileYCBTask(RLTask):
         self.franka_lfinger_pos = self._frankas._lfingers.get_world_poses(clone=False)[0] 
         self.franka_rfinger_pos = self._frankas._rfingers.get_world_poses(clone=False)[0] 
         
-
-        
-      
 
         # print(self.franka_lfinger_pos)
         # print(self.franka_rfinger_pos)
@@ -859,7 +877,7 @@ class FrankaMobileYCBTask(RLTask):
         # print('====')
 
 
-        self.rew_buf +=   reaching_reward_obj  + rot_reward * 0.5 + 10 * close_reward + grasp_success *  10 *  (0.1 +  10*(position[:,2]- self.init_pos[2]) * 10 ) 
+        self.rew_buf +=   2*reaching_reward_obj  + rot_reward * 0.5 + 5 * close_reward + grasp_success *  10 *  (0.1 +  10*(position[:,2]- self.init_pos[2]) * 10 ) 
         # print('diff: ', position[:,2]- self.init_pos[2])
         
       
@@ -869,6 +887,7 @@ class FrankaMobileYCBTask(RLTask):
     def is_done(self) -> None:
         # reset if drawer is open or max length reached
         # self.reset_buf = torch.where(self.cabinet_dof_pos[:, 3] > 0.39, torch.ones_like(self.reset_buf), self.reset_buf)
+        
         self.reset_buf = torch.where(
             self.progress_buf >= self._max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf
         )

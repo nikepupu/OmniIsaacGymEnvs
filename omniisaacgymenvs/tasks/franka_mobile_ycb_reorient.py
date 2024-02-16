@@ -55,7 +55,8 @@ from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.physx.scripts.physicsUtils import *
 from pxr import Usd, UsdLux, UsdGeom, UsdShade, Sdf, Gf, Tf, Vt, UsdPhysics, PhysxSchema
 from omni.physx import get_physx_interface, get_physx_simulation_interface
-
+from torch.utils.tensorboard import SummaryWriter
+writer = SummaryWriter()
 def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
     """
     Convert rotations given as quaternions to rotation matrices.
@@ -180,10 +181,12 @@ class FrankaMobileYCBTaskReorient(RLTask):
         self.distX_offset = 0.04
         self.dt = 1 / 60.0
 
-        self._num_observations = 37 + 4 #37 + 3 + 7
+        self._num_observations = 37 + 1 #37 + 3 + 7
         self._num_actions = 12   # 10 + 1
 
         self.translations_orig = None
+
+        self.num_episode = -1
         
 
         RLTask.__init__(self, name, env)
@@ -561,6 +564,10 @@ class FrankaMobileYCBTaskReorient(RLTask):
         # exit()
         # grasped = self.check_grasp(30).unsqueeze(-1)
         # print('grasped: ', torch.nonzero(grasped))
+        target_orientation = self.target_orientation.repeat(self._num_envs, 1).to(self._device)
+        position, orientation =  self._props.get_world_poses()
+       
+
         self.obs_buf = torch.cat(
             (
                 dof_pos_scaled, # 12
@@ -569,7 +576,9 @@ class FrankaMobileYCBTaskReorient(RLTask):
                 hand_pos, # 3
                 hand_rot, # 4
                 centers, # 3
-                rotation, # 4
+                ((position[:,2]- self.init_pos[2]) > 0.2).to(torch.float32).unsqueeze(-1), # 1
+                # rotation, # 4
+                # target_orientation, # 4
                 # goal_position# grasped
             ),
             dim=-1,
@@ -706,6 +715,7 @@ class FrankaMobileYCBTaskReorient(RLTask):
         # bookkeeping
         self.reset_buf[env_ids] = 0
         self.progress_buf[env_ids] = 0
+        self.num_episode += 1
 
     def post_reset(self):
 
@@ -761,13 +771,22 @@ class FrankaMobileYCBTaskReorient(RLTask):
         corners = transform_3d_bounding_boxes(self.bboxes, matrix, position.cpu()).numpy()
         
         upper_face_centers = torch.tensor([self.compute_upper_face_center(corners[i]) for i in range(corners.shape[0])]).to(self._device)
+        # add 3 centimeter  to the z axis
 
-        # upper_face_centers = upper_face_centers + torch.tensor([0, 0, 0.02], device=self._device)
-        upper_face_centers_exact = upper_face_centers + torch.tensor([0, 0, -0.015], device=self._device)
+        upper_face_centers = upper_face_centers + torch.tensor([0, 0, 0.02], device=self._device)
+        upper_face_centers_exact = upper_face_centers + torch.tensor([0, 0, -0.045], device=self._device)
 
-        # tcp_to_obj_dist = torch.norm(upper_face_centers - hand_pos, dim=-1)
+        tcp_to_obj_dist = torch.norm(upper_face_centers - hand_pos, dim=-1)
         delta = upper_face_centers_exact - hand_pos
         tcp_to_obj_dist_obj = torch.norm(upper_face_centers_exact - hand_pos, dim=-1)
+
+        # reaching_reward = 1 - torch.tanh( 3.0 * tcp_to_obj_dist) 
+
+        
+
+
+        
+
         
 
         handle_out_length = torch.norm(self.handle_out, dim = -1).to(torch.float32).to(self._device)
@@ -781,6 +800,13 @@ class FrankaMobileYCBTaskReorient(RLTask):
 
         self.franka_lfinger_pos = self._frankas._lfingers.get_world_poses(clone=False)[0] 
         self.franka_rfinger_pos = self._frankas._rfingers.get_world_poses(clone=False)[0] 
+        
+
+        
+      
+
+        # print(self.franka_lfinger_pos)
+        # print(self.franka_rfinger_pos)
      
        
         short_ltip = ((self.franka_lfinger_pos - upper_face_centers_exact) * handle_long).sum(dim=-1) 
@@ -815,31 +841,52 @@ class FrankaMobileYCBTaskReorient(RLTask):
 
         rot_reward = dot1 + dot2 + dot3 - 3     
 
+        # is_reached_pregrasped = (tcp_to_obj_dist < 0.03).to(self._device) & (rot_reward > -0.2).to(self._device)
 
         # is_reached_grasp = (tcp_to_obj_dist_obj < 0.02).to(self._device) & (rot_reward > -0.2).to(self._device)
 
-        grasp_success = is_reached &  (tcp_to_obj_dist_obj < 0.03) & (gripper_length < handle_long_length + 0.01) & (rot_reward > -0.2)
+        grasp_success = is_reached &  (tcp_to_obj_dist_obj < 0.025) & (gripper_length < handle_long_length + 0.01) & (rot_reward > -0.2)
 
         close_reward =   ( gripper_length -0.1) * (tcp_to_obj_dist_obj >= 0.01) * 0.1 + (0.1 - gripper_length ) * (tcp_to_obj_dist_obj < 0.02)
 
         num_envs = orientation.shape[0]
+
+
         
         target_orientation = self.target_orientation.repeat(num_envs, 1)
        
-        object_rotation_diff = quat_diff_rad(orientation.to(self._device), target_orientation.to(self._device))
+        object_rotation_diff = torch.abs(quat_diff_rad(orientation.to(self._device), target_orientation.to(self._device)))
 
-        rot_diff_reward = 1 - torch.tanh( 3.0 * object_rotation_diff)
+        rot_diff_reward = 1 - torch.tanh( 5.0 * object_rotation_diff)
 
-        height_reward = torch.clamp(position[:,2]- self.init_pos[2], max=0.5) * 10
-
-
-        self.rew_buf +=   reaching_reward_obj  + 5 * close_reward + grasp_success *  10 *  (0.1 +  height_reward ) 
+        # self.rew_buf +=   reaching_reward_obj  + 10 * close_reward + grasp_success *  10 *  (0.1 +  height_reward ) 
+        # lift_reward =  grasp_success *  10 *  (0.1 +  100*( torch.clamp(position[:,2]- self.init_pos[2], max=0.2)) )
+        # if < 0, then give a large penalty
+        # lift_reward = 0.0 #torch.where(position[:,2]- self.init_pos[2] < -0.01, -1.0  , lift_reward)
         
         # add rotation diff reward only if the object is higher than 0.2 m
-        self.rew_buf +=  grasp_success * (position[:,2] >= 0.2).to(torch.float32) * rot_diff_reward * 100
+        target_rotation_reward =   rot_diff_reward 
+
+        # standard_reward =  lift_reward + 2 * reaching_reward_obj + 5 * close_reward  + rot_reward * 0.5 
+        
 
         # add rot_reward only if the object height is smaller than 0.2 m
-        self.rew_buf +=  (position[:,2] < 0.2).to(torch.float32) * rot_reward * 0.5
+       
+        standard_reward = 2*reaching_reward_obj  + rot_reward * 0.5 + 5 * close_reward + grasp_success *  10 *  (0.1 +  50*(position[:,2]- self.init_pos[2])  ) 
+        
+        self.rew_buf =  ((position[:,2]- self.init_pos[2]) > 0.2 ) * (target_rotation_reward+ 1.0)  * 2000  + ((position[:,2]- self.init_pos[2]) <= 0.2 ) * standard_reward
+
+        # if self.progress_buf[0] > 180:
+        #     self.rew_buf =  ((position[:,2]- self.init_pos[2]) > 0.2 ) * target_rotation_reward  * 2000  
+        #         # + ((position[:,2]- self.init_pos[2]) <= 0.2 ) * standard_reward
+        # else:
+        #     self.rew_buf =   5*reaching_reward_obj  + rot_reward * 0.5 + 5 * close_reward + grasp_success *  10 *  (0.1 +  10*(position[:,2]- self.init_pos[2]) * 10 ) 
+
+        # writer.add_scalar("Reward/reaching_reward_obj", torch.mean(reaching_reward_obj), self.progress_buf[0] + self._max_episode_length * self.num_episode )
+        # writer.add_scalar("Reward/rot_reward", torch.mean(((position[:,2]- self.init_pos[2])  < 0.1) * rot_reward * 0.5) , self.progress_buf[0] + self._max_episode_length * self.num_episode )
+        # writer.add_scalar("Reward/close_reward", torch.mean(close_reward * 5), self.progress_buf[0] + self._max_episode_length * self.num_episode )
+        # # writer.add_scalar("Reward/lift_reward", torch.mean(lift_reward)  , self.progress_buf[0] + self._max_episode_length * self.num_episode )
+        # writer.add_scalar("Reward/target_rot_reward", torch.mean(target_rotation_reward * 100), self.progress_buf[0] + self._max_episode_length * self.num_episode)
       
         self.rew_buf[:] = self.rew_buf[:].to(torch.float32)
         

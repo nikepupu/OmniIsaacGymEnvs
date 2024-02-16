@@ -5,9 +5,9 @@ physics_engine: ${..physics_engine}
 
 # if given, will override the device setting in gym. 
 env:
-  numEnvs: ${resolve_default:4,${...num_envs}}
+  numEnvs: ${resolve_default:2,${...num_envs}}
   envSpacing: 5.0
-  episodeLength: 240
+  episodeLength: 360
   enableDebugVis: False
 
   clipObservations: 5.0
@@ -65,13 +65,13 @@ sim:
     max_depenetration_velocity: 10.0
 
     # GPU buffers
-    gpu_max_rigid_contact_count: 1048576
-    gpu_max_rigid_patch_count: 33554432
-    gpu_found_lost_pairs_capacity: 1048576
-    gpu_found_lost_aggregate_pairs_capacity: 524288
-    gpu_total_aggregate_pairs_capacity: 2097152
-    gpu_max_soft_body_contacts: 2097152
-    gpu_max_particle_contacts: 2097152
-    gpu_heap_capacity: 33554432
-    gpu_temp_buffer_capacity: 16777216
+    gpu_max_rigid_contact_count: 2048576
+    gpu_max_rigid_patch_count: 63554432
+    gpu_found_lost_pairs_capacity: 2048576
+    gpu_found_lost_aggregate_pairs_capacity: 1024288
+    gpu_total_aggregate_pairs_capacity: 4097152
+    gpu_max_soft_body_contacts: 4097152
+    gpu_max_particle_contacts: 4097152
+    gpu_heap_capacity: 63554432
+    gpu_temp_buffer_capacity: 26777216
     gpu_max_num_partitions: 8
