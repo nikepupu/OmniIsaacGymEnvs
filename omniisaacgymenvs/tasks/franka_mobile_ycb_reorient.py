@@ -329,7 +329,7 @@ class FrankaMobileYCBTaskReorient(RLTask):
         self.model_bbox_size = torch.tensor( np.array(bboxes[1]) - np.array(bboxes[0]))
         
         self.bboxes = get_corners_from_min_max(bboxes[0], bboxes[1])
-        self.bboxes = torch.tensor(self.bboxes).float()
+        self.bboxes = torch.from_numpy(np.array(self.bboxes)).float()
 
         orientation = [ 0.7071068, 0.7071068, 0, 0,  ]
         self.target_orientation = torch.tensor([1.0, 0.0, 0.0, 0.0])
@@ -353,9 +353,9 @@ class FrankaMobileYCBTaskReorient(RLTask):
 
 
         self.vectors = self.batch_extract_direction_vectors(np.array([corner]))[0]
-        self.handle_out = torch.tensor(self.vectors[0], device=self._device).to(torch.float32)
-        self.handle_long = torch.tensor(self.vectors[1], device=self._device).to(torch.float32)
-        self.handle_short = torch.tensor(self.vectors[2], device=self._device).to(torch.float32)
+        self.handle_out = self.vectors[0].to(self._device).to(torch.float32)
+        self.handle_long = self.vectors[1].to(self._device).to(torch.float32)
+        self.handle_short = self.vectors[2].to(self._device).to(torch.float32)
        
         stage = get_current_stage()
         prim = stage.GetPrimAtPath( "/World/envs/env_0/ycb/_03_cracker_box")
@@ -685,7 +685,7 @@ class FrankaMobileYCBTaskReorient(RLTask):
 
             direction_vectors.append([x_vector, y_vector, z_vector])
 
-        return torch.tensor(direction_vectors)
+        return torch.from_numpy(np.array(direction_vectors))
 
     def reset_idx(self, env_ids):
         indices = env_ids.to(dtype=torch.int32)
