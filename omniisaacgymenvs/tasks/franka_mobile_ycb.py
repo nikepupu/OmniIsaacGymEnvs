@@ -328,13 +328,15 @@ class FrankaMobileYCBTask(RLTask):
         self.bboxes = get_corners_from_min_max(bboxes[0], bboxes[1])
         self.bboxes = torch.tensor(self.bboxes).float()
 
-        orientation = [ 0.7071068, 0.7071068, 0, 0,  ]
+        # orientation = [ 0.7071068, 0.7071068, 0, 0,  ]
+        orientation = [ 0.7071068, 0.0, 0.7071068, 0.0,  ]
         ycb_object = RigidPrim( prim_path = self.default_zero_env_path + "/ycb", orientation = orientation, scale=[0.8, 0.8, 0.8])
         bboxes_adjust = omni.usd.get_context().compute_path_world_bounding_box(prim_path)
         min_box = np.array(bboxes_adjust[0])
         zmin = min_box[2]
-
-   
+        # world = World()
+        # while True:
+        #     world.render()
     
         position, orientation = ycb_object.get_world_pose()
         position[2] = -zmin 
@@ -748,6 +750,18 @@ class FrankaMobileYCBTask(RLTask):
         # randomize all envs
         indices = torch.arange(self._num_envs, dtype=torch.int64, device=self._device)
         self.reset_idx(indices)
+    
+    def compute_top_four_corners(self, corners):
+        # Convert to numpy array for easier handling
+        corners = np.array(corners)
+
+        # Sort corners by their z-values
+        sorted_corners = corners[corners[:, 2].argsort()]
+
+        # Select the top four corners
+        upper_face_corners = sorted_corners[-4:]
+
+        return upper_face_corners
 
     def compute_upper_face_center(self, corners):
         # Convert to numpy array for easier handling
@@ -833,13 +847,20 @@ class FrankaMobileYCBTask(RLTask):
        
 
 
-        hand_grip_dir = quat_axis(hand_rot, 0).to(torch.float32).to(self._device)
+        # hand_grip_dir = quat_axis(hand_rot, 0).to(torch.float32).to(self._device)
+       
+        
+        # hand_sep_dir = quat_axis(hand_rot, 2).to(torch.float32).to(self._device)
+      
+
+        # hand_down_dir = quat_axis(hand_rot, 1).to(torch.float32).to(self._device)
+        hand_grip_dir = quat_axis(hand_rot, 1).to(torch.float32).to(self._device)
        
         
         hand_sep_dir = quat_axis(hand_rot, 2).to(torch.float32).to(self._device)
       
 
-        hand_down_dir = quat_axis(hand_rot, 1).to(torch.float32).to(self._device)
+        hand_down_dir = quat_axis(hand_rot, 0).to(torch.float32).to(self._device)
         
         dot1 = torch.max((hand_grip_dir * handle_out).sum(dim=-1), (-hand_grip_dir * handle_out).sum(dim=-1))
         dot2 = torch.max((hand_sep_dir * handle_short).sum(dim=-1), (-hand_sep_dir * handle_short).sum(dim=-1))
