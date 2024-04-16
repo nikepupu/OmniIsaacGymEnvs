@@ -223,15 +223,15 @@ class FrankaMobileMultiTask(RLMultiTask):
         self.finger_close_reward_scale = self._task_cfg["env"]["fingerCloseRewardScale"]
 
     def reset_scene(self, scene):
-        self.cabinet_scale = 0.5
+        self.cabinet_scale = 0.7
         self.cabinet_orientation = torch.tensor([ 1.0, 0, 0, 0]).to(torch.float32)
         self._usd_context = omni.usd.get_context()
     
         cnt = 0
         
         for idx,  usd in enumerate(self.usds):
-            if cnt >= 20:
-                break
+            # if cnt >= 20:
+            #     break
             print('setup: ', usd)
 
             # if idx != 2:
@@ -239,7 +239,7 @@ class FrankaMobileMultiTask(RLMultiTask):
             # 47570, 47565
             # if int(usd.split('/')[-2]) in [46130, 46893, 45235, 44853, 47570, 47565, 45238 ]:
             #     continue
-            for _ in range(1):
+            for _ in range(2):
                 anno_id = int(usd.split('/')[-2])
                 found_handle = False
                 for anno in self.annotations[anno_id]:
@@ -257,8 +257,8 @@ class FrankaMobileMultiTask(RLMultiTask):
                                 self.cabinet_infos.append( (self.annotations[anno_id], anno, anno['link_name']) )
                                 cnt += 1
 
-                            if cnt >= 20:
-                                break
+                            # if cnt >= 20:
+                            #     break
                                 # if cnt == 258 or cnt == 259:
                                 #     print('==========', usd)
                                     
@@ -306,7 +306,7 @@ class FrankaMobileMultiTask(RLMultiTask):
           
            
             
-            x, y = get_cabinet_position(env_id, 5, 5, 10)
+            x, y = get_cabinet_position(env_id, 10, 10, 10)
             
             # print('x, y: ', x, y)
             cabinet = Cabinet(env_path + "/cabinet", name="cabinet", 
@@ -470,18 +470,9 @@ class FrankaMobileMultiTask(RLMultiTask):
     
     def set_up_scene(self, scene) -> None:
 
-      
-       
-       
         self.reset_scene(scene)
-
-
         super().set_up_scene(scene, filter_collisions=False)
 
-       
-        
-
-        
         return
 
     def initialize_views(self, scene):
@@ -861,24 +852,11 @@ class FrankaMobileMultiTask(RLMultiTask):
         timeline = omni.timeline.get_timeline_interface()
         # timeline.pause()
        
-        
-
         indices = env_ids.to(dtype=torch.int32)
         num_indices = len(indices)
 
         dof_pos = torch.zeros((num_indices, self._frankas.num_dof), device=self._device)
         dof_vel = torch.zeros((num_indices, self._frankas.num_dof), device=self._device)
-   
-
-        # # reset cabinet
-        for _cabinet in self._cabinets:
-            _cabinet.set_joint_positions(
-                torch.zeros_like(_cabinet.get_joint_positions(clone=False))
-            )
-            _cabinet.set_joint_velocities(
-                torch.zeros_like(_cabinet.get_joint_velocities(clone=False))
-            )
-
         
         self._frankas.set_joint_position_targets(self.franka_dof_targets, indices=indices)
         self._frankas.set_joint_positions(dof_pos, indices=indices)
@@ -886,25 +864,6 @@ class FrankaMobileMultiTask(RLMultiTask):
 
 
         world = World()
-        # for _ in range(4):
-        #     world.step(render=False)
-
-        # self.reset_scale()
-        # while True:
-        #     world.step(render=True)
-
-        # for _cabinet in self._cabinets:
-        #     _cabinet.set_joint_positions(
-        #         torch.zeros_like(_cabinet.get_joint_positions(clone=False))
-        #     )
-        #     _cabinet.set_joint_velocities(
-        #         torch.zeros_like(_cabinet.get_joint_velocities(clone=False))
-        #     )
-
-        
-        # self._frankas.set_joint_position_targets(self.franka_dof_targets, indices=indices)
-        # self._frankas.set_joint_positions(dof_pos, indices=indices)
-        # self._frankas.set_joint_velocities(dof_vel, indices=indices)
 
         # bookkeeping
         self.reset_buf[:] = 0
@@ -927,6 +886,7 @@ class FrankaMobileMultiTask(RLMultiTask):
 
         self.cabinet_dof_lower_limits = []
         self.cabinet_dof_upper_limits = []
+        self.allJointIndices = []
        
         for idx, joint_names in enumerate(self.allJointNames):
             # print('cabnet dof limits: ', cabinet_dof_limits[idx].shape)
@@ -940,6 +900,31 @@ class FrankaMobileMultiTask(RLMultiTask):
         
         self.cabinet_dof_lower_limits = torch.stack(self.cabinet_dof_lower_limits)
         self.cabinet_dof_upper_limits = torch.stack(self.cabinet_dof_upper_limits)
+
+        # # reset cabinet
+        for dof_index, _cabinet in enumerate(self._cabinets):
+            index = self.allJointIndices[dof_index]
+            # _cabinet.set_joint_positions(
+            #     torch.zeros_like(_cabinet.get_joint_positions(clone=False))
+            # )
+            _cabinet.set_joint_velocities(
+                torch.zeros_like(_cabinet.get_joint_velocities(clone=False))
+            )
+
+            percentage = 1.0
+            dof_limits = _cabinet.get_dof_limits()
+            
+            
+            lower = dof_limits[0, index, 0].to(device=self._device)
+            upper = dof_limits[0, index, 1].to(device=self._device)
+
+            
+            tmp = torch.zeros_like(_cabinet.get_joint_positions(clone=False)) 
+            tmp[0][index] =  percentage * (upper - lower) + lower 
+            # print('tmp: ', tmp)
+            # print('ones: ', torch.ones_like(_cabinet.get_joint_positions(clone=False)))
+        
+            _cabinet.set_joint_positions(tmp)
 
         timeline.play()
      
@@ -970,6 +955,7 @@ class FrankaMobileMultiTask(RLMultiTask):
 
         self.cabinet_dof_lower_limits = []
         self.cabinet_dof_upper_limits = []
+        self.allJointIndices = []
        
         for idx, joint_names in enumerate(self.allJointNames):
             # print('cabnet dof limits: ', cabinet_dof_limits[idx].shape)
@@ -1213,23 +1199,29 @@ class FrankaMobileMultiTask(RLMultiTask):
 
 
         normalized_dof_pos = (self.cabinet_dof_pos - self.cabinet_dof_lower_limits) / (self.cabinet_dof_upper_limits - self.cabinet_dof_lower_limits)
-        condition_mask = (normalized_dof_pos >= 0.95) & grasp_success
+        condition_mask = (normalized_dof_pos >= 0.45) & (normalized_dof_pos <= 0.55) &  grasp_success
+
+        penality_condition = (normalized_dof_pos < 0.45) | (normalized_dof_pos > 0.55)
 
         # if torch.any(normalized_dof_pos > 0.65):
         #     print('open 65%')
         # print(normalized_dof_pos)
 
-        self.rew_buf[:] = reaching_reward +  rot_reward * 0.5 + 5 * close_reward + grasp_success * 10 * ( 0.1 + normalized_dof_pos) 
+        # self.rew_buf[:] = reaching_reward +  rot_reward * 0.5 + 5 * close_reward + grasp_success * 10 * ( 0.1 + normalized_dof_pos) 
+        self.rew_buf[:] = reaching_reward +  rot_reward * 0.5 + 5 * close_reward + grasp_success * 10 * ( 0.1 + -normalized_dof_pos ) 
 
         # self.rew_buf = self.rew_buf + self.rew_buf.abs() * rot_reward
         condition_mask = condition_mask.squeeze(0)
-        # self.rew_buf[condition_mask] += 2.0
+        self.rew_buf[condition_mask] += 20.0
+
+        penality_condition = penality_condition.squeeze(0)
+        self.rew_buf[penality_condition] -= 20.0
         
         self.rew_buf[:] = self.rew_buf[:].to(torch.float32)
 
         self.success_buf = torch.zeros((self._num_envs, 1), device=self._device)
         
-        success_mask = (normalized_dof_pos > 0.90) #& grasp_success
+        success_mask = (normalized_dof_pos >= 0.45) & (normalized_dof_pos <= 0.55) #& grasp_success
         fail_mask = ~ success_mask
 
         success_mask = success_mask.squeeze(0)
