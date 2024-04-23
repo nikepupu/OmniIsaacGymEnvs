@@ -10,6 +10,9 @@
 import math
 import carb
 import numpy as np
+import os
+import json
+from typing import List, Type
 import torch
 torch.set_printoptions(sci_mode=False)
 import omni
@@ -23,7 +26,7 @@ from omni.isaac.core.utils.torch.transformations import *
 from omni.isaac.core.prims import RigidPrimView, XFormPrim
 from omni.isaac.core.materials import PhysicsMaterial
 from omni.isaac.core import World
-# from omni.debugdraw import get_debug_draw_interface
+from omni.debugdraw import get_debug_draw_interface
 from omniisaacgymenvs.tasks.base.rl_task_record import RLTaskRecord
 from omniisaacgymenvs.robots.articulations.cabinet import Cabinet
 # from omniisaacgymenvs.robots.articulations.franka import Franka
@@ -52,15 +55,21 @@ from omni.isaac.core.utils.torch.rotations import (
 from omni.physx.scripts import deformableUtils, physicsUtils
 from omni.isaac.core.utils.stage import add_reference_to_stage
 import pxr
-# def quat_axis(q, axis=0):
-#     '''
-#     :func apply rotation represented by quanternion `q`
-#     on basis vector(along axis)
-#     :return vector after rotation
-#     '''
-#     basis_vec = torch.zeros(q.shape[0], 3, device=q.device)
-#     basis_vec[:, axis] = 1
-#     return quat_rotate(q, basis_vec)
+from omni.isaac.core.utils.prims import get_all_matching_child_prims, get_prim_children, get_prim_at_path, delete_prim
+
+def load_annotation_file():
+    folder = '/home/nikepupu/Desktop/gapartnet_new_subdivition/partnet_all_annotated_new/annotation'
+    subfolders = sorted(os.listdir(folder))
+    
+    # filter out files starts with 4 and has 5 digits
+    subfolders = [f for f in subfolders if f.startswith('4') and len(f) == 5]
+    annotation_json = 'link_anno_gapartnet.json'
+    annotation = {}
+    for subfolder in subfolders:
+        annotation_path = os.path.join(folder, subfolder, annotation_json)
+        with open(annotation_path, 'r') as f:
+            annotation[int(subfolder)] = json.load(f)
+    return annotation
 
 def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
     """
@@ -139,7 +148,12 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
         self._num_observations = 40 #37 + 3 + 7
         self._num_actions = 13 # 10 + 1
 
+        self.annotations = load_annotation_file()
+
         self.translations_orig = None
+        self.scene_index = 0
+        self.cabinet_index = 0
+        self.drawer_index = 0
 
         RLTaskRecord.__init__(self, name, env)
         return
@@ -171,10 +185,72 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
     def set_up_scene(self, scene) -> None:
 
         self._usd_context = omni.usd.get_context()
-        self.get_scene()
-        self.get_cabinet()
-        self.get_franka()
+        import os
+        import re
+        import json
+
+        def parse_folder(path='/home/nikepupu/Desktop/physcene'):
+            infos = os.path.join(path, 'articulated_info')
+
+            info_return = []
+            for info in os.listdir(infos):
+                numbers = re.findall(r'\d+', info)
+
+                # numbers will be a list of all number sequences found, taking the first one
+                number = numbers[0] if numbers else None
+                # info_dict[number] = (info, infos)
+                with  open(os.path.join(infos, info)) as f:
+                    data = json.load(f)
+                    nodes = data["nodes"]
+                
+                nodes_to_load = []
+                for node in nodes:
+                    if 'articulated' in node:
+                        if node['articulated']:
+                            GAPartNet_ID = node['GAPartNet_ID']
+                            position = node['position']
+                            orientation = node['orientation']
+                            scale = node['scale']
+                            # print(self.annotations[int(GAPartNet_ID)])
+                            # exit()
+                            node_dict = {
+                                'GAPartNet_ID': GAPartNet_ID,
+                                'position': position,
+                                'orientation': orientation,
+                                'scale': scale,
+                                # 'link_name': node['link_name']
+                            }
+                            nodes_to_load.append(node_dict)
+                scene_path = os.path.join(path, 'usd', 'physcene_'+ number, 'main.usd')
+                info_return.append((scene_path, nodes_to_load))
+            return info_return
+                    
+        # def find_next_drawer(info_return):
+        #     while True:
+        #         node_to_load = info_return[self.scene_index][1][self.cabinet_index]
+        #         GAPartNet_ID = node_to_load["GAPartNet_ID"]
+        #         file_to_read =  f'/home/nikepupu/Desktop/gapartnet_new_subdivition/partnet_all_annotated_new/annotation/{GAPartNet_ID}/link_anno_gapartnet.json'
+        #         with open(file_to_read) as json_file:
+        #             data = json.load(json_file)
+                
+        #         print(data)
+        #         exit()
+
+        info_return = parse_folder()
+        scene_path = info_return[self.scene_index][0]
+        self.info_return = info_return
         
+        self.get_cabinet()
+        self.get_scene()
+
+        
+
+        
+        # self.get_franka()
+        world = World()
+        while True:
+            world.render()
+
         
        
 
@@ -243,21 +319,22 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
     
     def get_scene(self):
         import json
-        add_reference_to_stage('/home/nikepupu/Desktop/physcene_33_rigid/main.usd', '/World/envs/env_0/scene')
-        with open('/home/nikepupu/Desktop/physcene_33_rigid/contact_graph_cad.json') as f:
-            self.scene_info = json.load(f)
+        scene_path = self.info_return[self.scene_index][0]
+        add_reference_to_stage(scene_path, '/World/envs/env_0/scene')
+        # with open('/home/nikepupu/Desktop/physcene_33_rigid/contact_graph_cad.json') as f:
+        #     self.scene_info = json.load(f)
         # print(self.scene_info["nodes"])
-        for node in self.scene_info["nodes"]:
+        # for node in self.scene_info["nodes"]:
             
-            if  'cad_id' in node and node["cad_id"] == "storagefurniture_gpn_6":
-                self.cabinet_orientation = node["orientation"]
-                self.cabinet_position = node["position"]
-                self.cabinet_scale = node["scale"]
-        scale = 0.5
+        #     if  'cad_id' in node and node["cad_id"] == "storagefurniture_gpn_6":
+        #         self.cabinet_orientation = node["orientation"]
+        #         self.cabinet_position = node["position"]
+        #         self.cabinet_scale = node["scale"]
+       
         # self.cabinet_scale = torch.tensor([scale, scale, scale]).to(torch.float32)
         # self.cabinet_position = torch.tensor([0.0, 0.0, 0.0]).to(torch.float32)
-        self.cabinet_position[0] += 0.01
-        self.cabinet_position[1] -= 0.01
+        # self.cabinet_position[0] += 0.01
+        # self.cabinet_position[1] -= 0.01
 
         # self.cabinet_position = [0, 0, 0]
         # self.cabinet_orientation = torch.tensor([ 0.7071068, 0, 0, 0.7071068]).to(torch.float32)
@@ -347,21 +424,87 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
     
     def get_cabinet(self):
         
-        position = self.cabinet_position
-        orientation = self.cabinet_orientation
-        # print('orientation:', orientation)
-        # exit()
+        while True:
+            print(self.scene_index, self.cabinet_index, self.drawer_index, self.info_return[self.scene_index])
+            node_to_load = self.info_return[self.scene_index][1][self.cabinet_index]
+            
+            position = node_to_load['position']
+            orientation = node_to_load['orientation']
+            # change orientation from xyzw to wxyz
+            orientation = torch.tensor([orientation[3], orientation[0], orientation[1], orientation[2]]).to(torch.float32)
 
-        scale = self.cabinet_scale
-        # cabinet.set_world_pose(position, orientation)
-        # cabinet.set_local_scales(scale)
-        scale_max = max(scale)
-        # print('scale_max: ', scale_max)
-        # exit()
+
+            print()
+
+            scale = node_to_load['scale']
+            
+            scale_max = max(scale)
+            scale_min = min(scale)
         
-        cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 
-                          usd_path="/home/nikepupu/Desktop/Orbit/NewUSD/46380/mobility_relabel_gapartnet.usd", 
-                          translation=position, orientation=orientation, scales=scale)
+            GAPartNet_ID = int(node_to_load["GAPartNet_ID"])
+            if GAPartNet_ID not in self.annotations.keys():
+                self.cabinet_index += 1
+                if self.cabinet_index >= len(self.info_return[self.scene_index][1]):
+                    self.scene_index += 1
+                    self.cabinet_index = 0
+                    self.drawer_index = 0
+               
+                continue
+            data = self.annotations[int(GAPartNet_ID)][self.drawer_index]
+            if (not data['is_gapart']) or (data['category'] != 'slider_drawer'):
+                self.drawer_index += 1
+                if self.drawer_index >= len(self.annotations[int(GAPartNet_ID)]):
+                    self.cabinet_index += 1
+                    self.drawer_index = 0
+                if self.cabinet_index >= len(self.info_return[self.scene_index][1]):
+                    self.scene_index += 1
+                    self.cabinet_index = 0
+                    self.drawer_index = 0
+                continue
+            # print(data)
+            # exit()
+            
+
+
+        
+            
+            cabinet = Cabinet(self.default_zero_env_path + "/cabinet", name="cabinet", 
+                            usd_path=f"/home/nikepupu/Desktop/Orbit/NewUSD/{GAPartNet_ID}/mobility_relabel_gapartnet.usd", 
+                            translation=position, orientation=orientation, scale=[scale_min, scale_min, scale_min])
+            
+            ############ cehck if ok
+            env_path = f"{self.default_base_env_path}/env_{0}"
+            bbox_link = None
+            
+            link_name = data['link_name']
+
+            children = get_all_matching_child_prims(env_path + "/cabinet")
+            # print('children: ', children)
+            prims: List[Usd.Prim] = [x for x in children if x.IsA(UsdPhysics.Joint)] 
+            # print(prims)
+            
+            for joint in prims:
+                body1 = joint.GetRelationship("physics:body1").GetTargets()[0]
+                if bbox_link is None and len(joint.GetRelationship("physics:body0").GetTargets()) > 0:
+                    body0 = joint.GetRelationship("physics:body0").GetTargets()[0]
+                    if (body0.pathString).endswith(link_name):
+                        bbox_link = body1
+
+            if not bbox_link:
+
+                # delete
+                delete_prim(env_path + "/cabinet")
+                self.cabinet_index += 1
+                if self.cabinet_index >= len(self.info_return[self.scene_index][1]):
+                    self.scene_index += 1
+                    self.cabinet_index = 0
+                    self.drawer_index = 0
+            else:
+                break
+
+        
+        ##############
+        
 
         # move cabinet to the ground
         prim_path = self.default_zero_env_path + "/cabinet"
@@ -381,7 +524,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
 
         # add physics material
         stage = get_current_stage()
-        prim = stage.GetPrimAtPath(self.default_zero_env_path + "/cabinet/link_8/collisions")
+        prim = stage.GetPrimAtPath(self.default_zero_env_path + f"/cabinet/{link_name}/collisions")
         _physicsMaterialPath = prim.GetPath().AppendChild("physicsMaterial")
         material = PhysicsMaterial(
                 prim_path=_physicsMaterialPath,
@@ -399,7 +542,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
                     _physicsMaterialPath,
                 )
 
-        prims = get_all_matching_child_prims(self.default_zero_env_path + "/cabinet/link_8/collisions")
+        prims = get_all_matching_child_prims(self.default_zero_env_path + f"/cabinet/{link_name}/collisions")
         for prim in prims:
             physicsUtils.add_physics_material_to_prim(
                     stage,
@@ -425,13 +568,10 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
         device = self._device
         # hand_pos, hand_rot = self.get_ee_pose()
 
-        file_to_read = '/home/nikepupu/Desktop/gapartnet_new_subdivition/partnet_all_annotated_new/annotation/46380/link_anno_gapartnet.json'
-        import json
-        with open(file_to_read) as json_file:
-            data = json.load(json_file)
-        
+        data = self.annotations[int(GAPartNet_ID)]
+       
         for d in data:
-            if d['link_name'] == 'link_8':
+            if d['link_name'] == str(bbox_link).split('/')[-1]:
                 corners = torch.tensor(d['bbox'])
         
         # print('before: ', corners)
@@ -440,11 +580,9 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
         # exit()
         num_envs = self._num_envs
         self.bboxes = torch.zeros(( num_envs, 8, 3), device=device)
-        link_path =  f"/World/envs/env_0/cabinet/link_8"
-
         
 
-        link_path =  f"/World/envs/env_0/cabinet/link_8"
+        link_path =  f"/World/envs/env_0/cabinet/{link_name}"
         prim = get_prim_at_path(link_path)
         
         matrix = inv(np.array(omni.usd.get_world_transform_matrix(prim)))
@@ -474,16 +612,21 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
         self.handle_out = self.handle_out.to(self._device)
         self.handle_long = self.handle_long.to(self._device)
         
-        self.corners = corners.repeat((num_envs, 1,1)) * scale_max
+        # self.corners = corners.repeat((num_envs, 1,1)) * scale_max
 
-        self.corners_obj = corners.repeat((num_envs, 1,1)) * scale_max
+        # self.corners_obj = corners.repeat((num_envs, 1,1)) * scale_max
 
-        self.centers_obj = ((corners[0] * scale_max +  corners[6] * scale_max )/2.0).repeat((num_envs, 1)).to(torch.float).to(self._device)
+        # self.centers_obj = ((corners[0] * scale_max +  corners[6] * scale_max )/2.0).repeat((num_envs, 1)).to(torch.float).to(self._device)
         
 
+        self.corners = corners.repeat((num_envs, 1,1)) * scale_min
+
+        self.corners_obj = corners.repeat((num_envs, 1,1)) * scale_min
+
+        self.centers_obj = ((corners[0] * scale_min +  corners[6] * scale_min )/2.0).repeat((num_envs, 1)).to(torch.float).to(self._device)
 
         # world = World()
-        t = self.cabinet_position
+        t = position
         # print('self corners: ', self.corners)
         box = self.rotate_points_around_z(self.corners.cpu().numpy(), np.array([0,0,0]), 90)
         box = torch.tensor(box)
@@ -509,6 +652,7 @@ class FrankaMobileDrawerTaskRecord(RLTaskRecord):
                 # print("scale_factor", scale_factor)
                 joint.CreateUpperLimitAttr(upper_limit * scale_factor)
 
+        # world = World()
         # while True:
             
         #     color = 4283782485
